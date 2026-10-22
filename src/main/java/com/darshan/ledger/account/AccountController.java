@@ -35,6 +35,11 @@ public class AccountController {
         return accountService.get(accountId);
     }
 
+    @GetMapping("/api/v1/accounts/{accountId}/balance")
+    public AccountBalanceResponse balance(@PathVariable Long accountId) {
+        return accountService.balance(accountId);
+    }
+
     @GetMapping("/api/v1/customers/{customerId}/accounts")
     public List<AccountResponse> listForCustomer(@PathVariable Long customerId) {
         return accountService.listForCustomer(customerId);

@@ -71,6 +71,22 @@ class AccountServiceTests {
         assertThat(response.maskedAccountNumber()).isEqualTo(NUMBER.masked());
         assertThat(response.currency()).isEqualTo("INR");
         assertThat(response.type()).isEqualTo(AccountType.SAVINGS);
+        verify(accountBalances).initialize(saved.getValue());
+    }
+
+    @Test
+    void balanceCombinesTheAccountWithItsLedgerSnapshot() {
+        Account account = activeAccount();
+        given(accountRepository.findById(10L)).willReturn(Optional.of(account));
+        given(accountBalances.snapshot(account))
+                .willReturn(new AccountBalanceSnapshot(Money.of("250.00", INR), Money.of("200.00", INR)));
+
+        AccountBalanceResponse response = service.balance(10L);
+
+        assertThat(response.maskedAccountNumber()).isEqualTo(NUMBER.masked());
+        assertThat(response.ledgerBalance()).isEqualByComparingTo("250.00");
+        assertThat(response.availableBalance()).isEqualByComparingTo("200.00");
+        assertThat(response.currency()).isEqualTo("INR");
     }
 
     @Test
@@ -83,6 +99,7 @@ class AccountServiceTests {
                 .isEqualTo(AccountErrorCode.CUSTOMER_NOT_VERIFIED);
         verify(accountNumberGenerator, never()).next();
         verify(accountRepository, never()).save(any());
+        verify(accountBalances, never()).initialize(any());
     }
 
     @Test
