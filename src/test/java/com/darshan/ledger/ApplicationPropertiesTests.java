@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.darshan.ledger.account.AccountProperties;
 import com.darshan.ledger.approval.ApprovalProperties;
+import com.darshan.ledger.common.idempotency.IdempotencyProperties;
 import com.darshan.ledger.interest.InterestProperties;
+import com.darshan.ledger.ledger.LedgerProperties;
 import com.darshan.ledger.security.SecurityProperties;
 import com.darshan.ledger.transfer.TransferLimitsProperties;
 import java.math.BigDecimal;
@@ -48,6 +50,10 @@ class ApplicationPropertiesTests {
             assertThat(security.jwt().issuer()).isEqualTo("core-banking-ledger");
             assertThat(security.jwt().accessTokenTtl()).isEqualTo(Duration.ofMinutes(15));
             assertThat(security.rateLimit().transfersPerMinute()).isEqualTo(20);
+
+            assertThat(context.getBean(LedgerProperties.class).lockTimeout()).isEqualTo(Duration.ofSeconds(3));
+            assertThat(context.getBean(IdempotencyProperties.class).inProgressTimeout())
+                    .isEqualTo(Duration.ofMinutes(2));
         });
     }
 
@@ -73,7 +79,9 @@ class ApplicationPropertiesTests {
             "app.interest.savings-annual-rate=1.5",
             "app.interest.accrual-cron=every day at noon",
             "app.security.jwt.issuer=",
-            "app.security.rate-limit.transfers-per-minute=0"
+            "app.security.rate-limit.transfers-per-minute=0",
+            "app.ledger.lock-timeout=0s",
+            "app.idempotency.in-progress-timeout=-1m"
     })
     void invalidValuesFailStartup(String property) {
         runner.withPropertyValues(property).run(context -> {
@@ -87,7 +95,9 @@ class ApplicationPropertiesTests {
             TransferLimitsProperties.class,
             ApprovalProperties.class,
             InterestProperties.class,
-            SecurityProperties.class
+            SecurityProperties.class,
+            LedgerProperties.class,
+            IdempotencyProperties.class
     })
     static class PropertiesConfiguration {
     }

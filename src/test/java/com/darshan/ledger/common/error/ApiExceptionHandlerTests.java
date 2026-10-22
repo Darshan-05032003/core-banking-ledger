@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
@@ -124,6 +125,15 @@ class ApiExceptionHandlerTests {
     }
 
     @Test
+    void lockTimeoutReturns409WithItsOwnErrorCode() throws Exception {
+        mockMvc.perform(get("/test/errors/lock-timeout"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("LOCK_TIMEOUT"))
+                .andExpect(jsonPath("$.detail").value("The account is busy with another operation, please retry"))
+                .andExpect(content().string(not(containsString("canceling statement"))));
+    }
+
+    @Test
     void databaseConstraintViolationReturns409WithoutTheDatabaseMessage() throws Exception {
         mockMvc.perform(get("/test/errors/constraint").header(CorrelationIdFilter.HEADER, CORRELATION_ID))
                 .andExpect(status().isConflict())
@@ -214,6 +224,12 @@ class ApiExceptionHandlerTests {
         @GetMapping("/stale-update")
         void staleUpdate() {
             throw new OptimisticLockingFailureException("row version changed");
+        }
+
+        @GetMapping("/lock-timeout")
+        void lockTimeout() {
+            throw new CannotAcquireLockException("could not lock row",
+                    new IllegalStateException("ERROR: canceling statement due to lock timeout"));
         }
 
         @GetMapping("/constraint")

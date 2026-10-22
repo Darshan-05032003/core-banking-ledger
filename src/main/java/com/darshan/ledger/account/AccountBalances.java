@@ -7,4 +7,8 @@ public interface AccountBalances {
     void initialize(Account account);
 
     AccountBalanceSnapshot snapshot(Account account);
+
+    // Reads the balance under a row lock, so nothing can post into the account until the caller's
+    // transaction ends. Used when a decision such as closing depends on the balance staying put.
+    AccountBalanceSnapshot snapshotForUpdate(Account account);
 }

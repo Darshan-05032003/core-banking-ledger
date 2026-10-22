@@ -4,7 +4,9 @@ import com.darshan.ledger.account.Account;
 import com.darshan.ledger.common.error.BusinessRuleException;
 import com.darshan.ledger.common.money.Money;
 import com.darshan.ledger.security.CurrentUser;
+import jakarta.persistence.EntityManager;
 import java.time.Clock;
+import java.util.Collection;
 import java.util.Currency;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,6 +15,7 @@ import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 // The only code path that moves money. A journal is accepted only when its legs are in one
@@ -28,15 +31,19 @@ public class PostingService {
     private final JournalReferenceGenerator referenceGenerator;
     private final CurrentUser currentUser;
     private final Clock clock;
+    private final EntityManager entityManager;
+    private final LockTimeout lockTimeout;
 
     public PostingService(JournalEntryRepository journalEntryRepository,
             AccountBalanceRepository accountBalanceRepository, JournalReferenceGenerator referenceGenerator,
-            CurrentUser currentUser, Clock clock) {
+            CurrentUser currentUser, Clock clock, EntityManager entityManager, LockTimeout lockTimeout) {
         this.journalEntryRepository = journalEntryRepository;
         this.accountBalanceRepository = accountBalanceRepository;
         this.referenceGenerator = referenceGenerator;
         this.currentUser = currentUser;
         this.clock = clock;
+        this.entityManager = entityManager;
+        this.lockTimeout = lockTimeout;
     }
 
     @Transactional
@@ -76,25 +83,40 @@ public class PostingService {
         return debits;
     }
 
-    // Rows are locked in ascending account id so two postings touching the same accounts always
-    // wait for each other in the same order and cannot deadlock.
+    // Rows are locked in ascending account id so two transactions touching the same accounts always
+    // wait for each other in the same order and cannot deadlock. After each lock the account is
+    // re-read: it may have been closed while this transaction was waiting, and a decision taken on
+    // the state loaded before the wait would be stale. Callers bring the transaction that keeps
+    // the locks; without one the locks would be gone before the method returns.
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Map<Long, AccountBalance> lockBalances(Collection<Account> accounts) {
+        Map<Long, Account> byId = new TreeMap<>();
+        accounts.forEach(account -> byId.put(account.getId(), account));
+        lockTimeout.applyToCurrentTransaction();
+        Map<Long, AccountBalance> balances = new LinkedHashMap<>();
+        byId.forEach((accountId, account) -> {
+            balances.put(accountId, accountBalanceRepository.lockByAccountId(accountId)
+                    .orElseThrow(() -> new IllegalStateException("Account " + accountId + " has no balance row")));
+            entityManager.refresh(account);
+        });
+        return balances;
+    }
+
     private Map<Long, AccountBalance> lockCustomerBalances(List<PostingLeg> legs, Currency currency) {
-        Map<Long, Account> accounts = new TreeMap<>();
-        for (PostingLeg leg : legs) {
-            if (leg.account() instanceof AccountRef.CustomerAccountRef(Account account)) {
-                account.requireNotClosed();
-                if (!account.getCurrency().equals(currency)) {
-                    throw new BusinessRuleException(LedgerErrorCode.CURRENCY_MISMATCH,
-                            "Account " + account.getAccountNumber() + " is held in " + account.getCurrency()
-                                    + ", not " + currency);
-                }
-                accounts.put(account.getId(), account);
+        List<Account> accounts = legs.stream()
+                .filter(leg -> leg.account() instanceof AccountRef.CustomerAccountRef)
+                .map(leg -> ((AccountRef.CustomerAccountRef) leg.account()).account())
+                .toList();
+        for (Account account : accounts) {
+            account.requireNotClosed();
+            if (!account.getCurrency().equals(currency)) {
+                throw new BusinessRuleException(LedgerErrorCode.CURRENCY_MISMATCH,
+                        "Account " + account.getAccountNumber() + " is held in " + account.getCurrency()
+                                + ", not " + currency);
             }
         }
-        Map<Long, AccountBalance> balances = new LinkedHashMap<>();
-        accounts.keySet().forEach(accountId -> balances.put(accountId, accountBalanceRepository
-                .lockByAccountId(accountId)
-                .orElseThrow(() -> new IllegalStateException("Account " + accountId + " has no balance row"))));
+        Map<Long, AccountBalance> balances = lockBalances(accounts);
+        accounts.forEach(Account::requireNotClosed);
         return balances;
     }
 

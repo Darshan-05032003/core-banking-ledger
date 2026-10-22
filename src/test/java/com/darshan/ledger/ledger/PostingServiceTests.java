@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -21,6 +22,7 @@ import com.darshan.ledger.common.error.ConflictException;
 import com.darshan.ledger.common.error.LedgerException;
 import com.darshan.ledger.common.money.Money;
 import com.darshan.ledger.security.CurrentUser;
+import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -43,6 +45,10 @@ class PostingServiceTests {
     private JournalReferenceGenerator referenceGenerator;
     @Mock
     private CurrentUser currentUser;
+    @Mock
+    private EntityManager entityManager;
+    @Mock
+    private LockTimeout lockTimeout;
 
     private PostingService service;
     private GlAccount vault;
@@ -54,7 +60,7 @@ class PostingServiceTests {
     @BeforeEach
     void setUp() {
         service = new PostingService(journalEntryRepository, accountBalanceRepository, referenceGenerator, currentUser,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), entityManager, lockTimeout);
         vault = LedgerFixtures.cashVault();
         first = LedgerFixtures.account(2L, INR);
         second = LedgerFixtures.account(5L, INR);
@@ -171,11 +177,33 @@ class PostingServiceTests {
         service.post(Posting.of(JournalType.WITHDRAWAL, "Move",
                 List.of(PostingLeg.debit(second, amount), PostingLeg.credit(first, amount))));
 
-        InOrder locks = inOrder(accountBalanceRepository);
+        InOrder locks = inOrder(lockTimeout, accountBalanceRepository, entityManager);
+        locks.verify(lockTimeout).applyToCurrentTransaction();
         locks.verify(accountBalanceRepository).lockByAccountId(2L);
+        locks.verify(entityManager).refresh(first);
         locks.verify(accountBalanceRepository).lockByAccountId(5L);
+        locks.verify(entityManager).refresh(second);
         assertThat(secondBalance.ledgerBalance().isZero()).isTrue();
         assertThat(firstBalance.ledgerBalance()).isEqualTo(amount);
+    }
+
+    @Test
+    void refusesAnAccountThatWasClosedWhileWaitingForItsLock() {
+        given(accountBalanceRepository.lockByAccountId(2L)).willReturn(Optional.of(firstBalance));
+        willAnswer(invocation -> {
+            first.close(TODAY);
+            return null;
+        }).given(entityManager).refresh(first);
+        Money amount = Money.of("10.00", INR);
+        Posting posting = Posting.of(JournalType.DEPOSIT, "Raced with a closure",
+                List.of(PostingLeg.debit(vault, amount), PostingLeg.credit(first, amount)));
+
+        assertThatThrownBy(() -> service.post(posting))
+                .isInstanceOf(ConflictException.class)
+                .extracting(ex -> ((LedgerException) ex).getErrorCode())
+                .isEqualTo(AccountErrorCode.ACCOUNT_CLOSED);
+        verify(journalEntryRepository, never()).save(any());
+        assertThat(firstBalance.ledgerBalance().isZero()).isTrue();
     }
 
     @Test

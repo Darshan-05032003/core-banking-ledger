@@ -31,6 +31,10 @@ app:
   account:
     branch-code: ${APP_ACCOUNT_BRANCH_CODE:0001}
     default-currency: ${APP_ACCOUNT_DEFAULT_CURRENCY:INR}
+  ledger:
+    lock-timeout: ${APP_LEDGER_LOCK_TIMEOUT:3s}
+  idempotency:
+    in-progress-timeout: ${APP_IDEMPOTENCY_IN_PROGRESS_TIMEOUT:2m}
   limits:
     per-transaction: ${APP_LIMITS_PER_TRANSACTION:500000.00}
     daily: ${APP_LIMITS_DAILY:2000000.00}

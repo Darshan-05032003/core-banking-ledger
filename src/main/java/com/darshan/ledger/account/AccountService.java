@@ -85,9 +85,11 @@ public class AccountService {
         return accountMapper.toResponse(account);
     }
 
+    // The balance row is locked for the rest of this transaction, so a deposit or transfer that is
+    // waiting for the same row sees the account as closed once it gets the lock.
     public AccountResponse close(Long accountId) {
         Account account = requireAccount(accountId);
-        switch (accountBalances.snapshot(account).closureEligibility()) {
+        switch (accountBalances.snapshotForUpdate(account).closureEligibility()) {
             case ClosureEligibility.Eligible eligible -> account.close(LocalDate.now(clock));
             case ClosureEligibility.FundsOnHold holds -> throw new BusinessRuleException(
                     AccountErrorCode.FUNDS_ON_HOLD,
