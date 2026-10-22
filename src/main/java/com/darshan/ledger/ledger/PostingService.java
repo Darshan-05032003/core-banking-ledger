@@ -14,13 +14,16 @@ import java.util.Map;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 // The only code path that moves money. A journal is accepted only when its legs are in one
 // currency and the debits equal the credits; then the journal, its legs and the affected
-// balances are written in one transaction, so the books can never be half-updated.
+// balances are written in one transaction, so the books can never be half-updated. The posted
+// journal is announced before the transaction ends, so whatever must travel with it (the outbox
+// row for Kafka) is committed or rolled back together with it; no caller has to remember.
 @Service
 public class PostingService {
 
@@ -33,10 +36,12 @@ public class PostingService {
     private final Clock clock;
     private final EntityManager entityManager;
     private final LockTimeout lockTimeout;
+    private final ApplicationEventPublisher events;
 
     public PostingService(JournalEntryRepository journalEntryRepository,
             AccountBalanceRepository accountBalanceRepository, JournalReferenceGenerator referenceGenerator,
-            CurrentUser currentUser, Clock clock, EntityManager entityManager, LockTimeout lockTimeout) {
+            CurrentUser currentUser, Clock clock, EntityManager entityManager, LockTimeout lockTimeout,
+            ApplicationEventPublisher events) {
         this.journalEntryRepository = journalEntryRepository;
         this.accountBalanceRepository = accountBalanceRepository;
         this.referenceGenerator = referenceGenerator;
@@ -44,6 +49,7 @@ public class PostingService {
         this.clock = clock;
         this.entityManager = entityManager;
         this.lockTimeout = lockTimeout;
+        this.events = events;
     }
 
     @Transactional
@@ -58,6 +64,7 @@ public class PostingService {
         journalEntryRepository.save(journal);
         log.info("Journal {} ({}) posted for {} across {} legs", journal.getReference(), journal.getType(), total,
                 posting.legs().size());
+        events.publishEvent(new JournalPosted(journal));
         return journal;
     }
 
