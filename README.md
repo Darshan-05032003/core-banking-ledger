@@ -44,10 +44,23 @@ All endpoints are under `/api/v1`. Role-based access rules are added together wi
 | `GET /accounts/{id}` | Fetch an account |
 | `POST /accounts/{id}/freeze`, `/unfreeze` | Block or unblock an account |
 | `POST /accounts/{id}/close` | Close an account; allowed only when the balance is exactly zero and nothing is on hold |
+| `GET /accounts/{id}/balance` | Ledger and available balance of an account |
+| `POST /accounts/{id}/deposits` | Teller cash deposit (`amount`, `currency`, optional `remarks`) into an `ACTIVE` account |
+| `POST /accounts/{id}/withdrawals` | Teller cash withdrawal; refused with `INSUFFICIENT_FUNDS` when the available balance is too low |
+| `GET /journals/{id}` | A posted journal with its ledger lines |
+| `POST /journals/{id}/reversal` | Correct a journal by posting the opposite legs (`reason` required); each journal can be reversed once |
 
 Account numbers have twelve digits: a four-digit branch code (`app.account.branch-code`), a seven-digit sequence drawn from a database sequence and a Luhn check digit, so a mistyped digit is detected before any lookup. Responses and logs never contain full account numbers, phone numbers or email addresses; they are masked as `XXXXXXXX4821` and `a***@example.com`.
 
-Business rule violations use 422 with a machine-readable code, for example `CUSTOMER_NOT_VERIFIED`, `BALANCE_NOT_ZERO` or `FUNDS_ON_HOLD`; invalid state changes such as freezing an already frozen account use 409 (`ACCOUNT_NOT_ACTIVE`, `ACCOUNT_CLOSED`, `KYC_STATUS_UNCHANGED`).
+Business rule violations use 422 with a machine-readable code, for example `CUSTOMER_NOT_VERIFIED`, `BALANCE_NOT_ZERO`, `INSUFFICIENT_FUNDS` or `CURRENCY_MISMATCH`; invalid state changes such as freezing an already frozen account or reversing a journal twice use 409 (`ACCOUNT_NOT_ACTIVE`, `ACCOUNT_CLOSED`, `KYC_STATUS_UNCHANGED`, `JOURNAL_ALREADY_REVERSED`).
+
+## Ledger
+
+Money moves only through `PostingService`, which records every business event as a journal with two or more ledger lines. Each line debits or credits either a customer account or one of the bank's general ledger accounts (`CASH_VAULT`, `INTEREST_EXPENSE`, `SUSPENSE`). A journal is accepted only when all its lines are in one currency and the debits equal the credits; the journal, its lines and the affected balances are then written in a single transaction, with the balance rows locked in ascending account id order.
+
+A cash deposit debits `CASH_VAULT` and credits the customer account; a withdrawal does the opposite and is refused when the available balance is lower than the amount. Customer balances are stored in `account_balance` (ledger balance and available balance, which differ only when money is on hold) and must always agree with the sum of the account's ledger lines.
+
+`journal_entry` and `ledger_entry` are append-only: database triggers reject any `UPDATE`, `DELETE` or `TRUNCATE`. A mistake is corrected with `POST /api/v1/journals/{id}/reversal`, which posts a new journal with every leg flipped and linked to the original through `reversal_of`; a unique constraint on that column guarantees a journal is reversed at most once even under concurrent requests.
 
 ## Error responses
 
@@ -73,4 +86,4 @@ Validation failures (400) add an `errors` array of `{ "field", "message" }` entr
 ./mvnw clean verify
 ```
 
-Integration tests start PostgreSQL in a Testcontainers container on a random port, so Docker must be running.
+Integration tests start PostgreSQL in a Testcontainers container on a random port, so Docker must be running. They include an invariant test that runs a random sequence of deposits, withdrawals and reversals and then checks, with SQL, that every journal balances, that each account balance equals the sum of its ledger lines and that the cash in the vault equals what the bank owes its customers.
