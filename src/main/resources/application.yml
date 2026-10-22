@@ -44,6 +44,8 @@ app:
     threshold: ${APP_APPROVAL_THRESHOLD:200000.00}
     pending-expiry: ${APP_APPROVAL_PENDING_EXPIRY:24h}
     expiry-cron: ${APP_APPROVAL_EXPIRY_CRON:0 * * * * *}
+  statement:
+    max-period: ${APP_STATEMENT_MAX_PERIOD:1y}
   interest:
     savings-annual-rate: ${APP_INTEREST_SAVINGS_ANNUAL_RATE:0.0350}
     accrual-cron: ${APP_INTEREST_ACCRUAL_CRON:0 30 0 * * *}

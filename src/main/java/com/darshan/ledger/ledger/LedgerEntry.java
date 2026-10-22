@@ -14,6 +14,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -48,10 +49,16 @@ public class LedgerEntry {
     @Embedded
     private Money amount;
 
+    // Copied from the journal so statements can range-scan one account's lines by posting time
+    // without joining; a composite foreign key keeps the copy equal to the journal's value.
+    @Column(name = "posted_at", nullable = false, updatable = false)
+    private Instant postedAt;
+
     LedgerEntry(JournalEntry journal, AccountRef accountRef, EntryDirection direction, Money amount) {
         this.journal = Objects.requireNonNull(journal);
         this.direction = Objects.requireNonNull(direction);
         this.amount = Objects.requireNonNull(amount);
+        this.postedAt = journal.getPostedAt();
         switch (accountRef) {
             case AccountRef.CustomerAccountRef customer -> this.account = customer.account();
             case AccountRef.GlAccountRef gl -> this.glAccount = gl.glAccount();

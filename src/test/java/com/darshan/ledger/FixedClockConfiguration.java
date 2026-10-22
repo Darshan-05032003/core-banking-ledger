@@ -1,6 +1,5 @@
 package com.darshan.ledger;
 
-import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -16,7 +15,7 @@ public class FixedClockConfiguration {
 
     @Bean
     @Primary
-    Clock fixedClock() {
-        return Clock.fixed(NOW, ZoneOffset.UTC);
+    MutableClock fixedClock() {
+        return new MutableClock(NOW, ZoneOffset.UTC);
     }
 }

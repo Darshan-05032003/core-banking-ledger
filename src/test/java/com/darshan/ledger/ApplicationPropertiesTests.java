@@ -7,10 +7,12 @@ import com.darshan.ledger.common.idempotency.IdempotencyProperties;
 import com.darshan.ledger.interest.InterestProperties;
 import com.darshan.ledger.ledger.LedgerProperties;
 import com.darshan.ledger.security.SecurityProperties;
+import com.darshan.ledger.statement.StatementProperties;
 import com.darshan.ledger.transfer.ApprovalProperties;
 import com.darshan.ledger.transfer.TransferLimitsProperties;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.Period;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -55,6 +57,7 @@ class ApplicationPropertiesTests {
             assertThat(security.rateLimit().transfersPerMinute()).isEqualTo(20);
 
             assertThat(context.getBean(LedgerProperties.class).lockTimeout()).isEqualTo(Duration.ofSeconds(3));
+            assertThat(context.getBean(StatementProperties.class).maxPeriod()).isEqualTo(Period.ofYears(1));
             assertThat(context.getBean(IdempotencyProperties.class).inProgressTimeout())
                     .isEqualTo(Duration.ofMinutes(2));
         });
@@ -87,7 +90,9 @@ class ApplicationPropertiesTests {
             "app.security.jwt.private-key=-----BEGIN PRIVATE KEY-----",
             "app.security.rate-limit.transfers-per-minute=0",
             "app.ledger.lock-timeout=0s",
-            "app.idempotency.in-progress-timeout=-1m"
+            "app.idempotency.in-progress-timeout=-1m",
+            "app.statement.max-period=0d",
+            "app.statement.max-period=-6m"
     })
     void invalidValuesFailStartup(String property) {
         runner.withPropertyValues(property).run(context -> {
@@ -103,7 +108,8 @@ class ApplicationPropertiesTests {
             InterestProperties.class,
             SecurityProperties.class,
             LedgerProperties.class,
-            IdempotencyProperties.class
+            IdempotencyProperties.class,
+            StatementProperties.class
     })
     static class PropertiesConfiguration {
     }
