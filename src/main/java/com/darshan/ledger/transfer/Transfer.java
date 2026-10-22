@@ -150,7 +150,7 @@ public class Transfer {
         this.completedAt = Objects.requireNonNull(now);
     }
 
-    private void requirePendingApproval() {
+    public void requirePendingApproval() {
         if (!isPendingApproval()) {
             throw new ConflictException(TransferErrorCode.TRANSFER_NOT_PENDING,
                     "Transfer " + reference + " is " + status + ", only a pending transfer can be decided");
