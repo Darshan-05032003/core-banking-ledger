@@ -1,5 +1,6 @@
 package com.darshan.ledger.transfer;
 
+import com.darshan.ledger.audit.Audited;
 import com.darshan.ledger.common.idempotency.IdempotencyService;
 import com.darshan.ledger.common.idempotency.StoredResponse;
 import jakarta.validation.Valid;
@@ -7,6 +8,7 @@ import java.net.URI;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,17 +23,24 @@ public class TransferController {
     public static final String REPLAYED_HEADER = "Idempotent-Replayed";
 
     private final TransferService transferService;
+    private final TransferRateLimiter rateLimiter;
 
-    public TransferController(TransferService transferService) {
+    public TransferController(TransferService transferService, TransferRateLimiter rateLimiter) {
         this.transferService = transferService;
+        this.rateLimiter = rateLimiter;
     }
 
     @PostMapping("/api/v1/transfers")
     @PreAuthorize("hasRole('ADMIN') "
             + "or (hasRole('CUSTOMER') and @accountAccess.ownsAccountNumber(#request.fromAccount(), authentication))")
+    @Audited(action = "TRANSFER", targetType = "TRANSFER",
+            targetId = "#result instanceof T(com.darshan.ledger.transfer.TransferResponse) ? #result.id() : null",
+            details = "{fromAccount: #request.maskedFromAccount(), toAccount: #request.maskedToAccount(), "
+                    + "amount: #request.amount(), currency: #request.currency()}")
     public ResponseEntity<Object> transfer(
             @RequestHeader(name = IdempotencyService.HEADER, required = false) String idempotencyKey,
-            @Valid @RequestBody TransferRequest request) {
+            @Valid @RequestBody TransferRequest request, Authentication authentication) {
+        rateLimiter.acquire(authentication.getName());
         return switch (transferService.transfer(idempotencyKey, request)) {
             case TransferOutcome.Created created -> ResponseEntity.created(location(created.response().id()))
                     .body(created.response());

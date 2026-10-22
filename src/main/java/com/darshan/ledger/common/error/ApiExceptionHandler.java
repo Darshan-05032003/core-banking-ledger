@@ -38,6 +38,14 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return createResponseEntity(ProblemDetails.of(ex), headers, ex.getStatus(), request);
     }
 
+    @ExceptionHandler(RateLimitExceededException.class)
+    ResponseEntity<Object> handleRateLimit(RateLimitExceededException ex, WebRequest request) {
+        log.info("Request rejected: {} {}", ex.getErrorCode().code(), ex.getMessage());
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.RETRY_AFTER, String.valueOf(ex.retryAfterSeconds()));
+        return createResponseEntity(ProblemDetails.of(ex), headers, ex.getStatus(), request);
+    }
+
     @ExceptionHandler(OptimisticLockingFailureException.class)
     ResponseEntity<Object> handleOptimisticLocking(OptimisticLockingFailureException ex, WebRequest request) {
         log.info("Optimistic lock conflict: {}", ex.getMessage());

@@ -47,6 +47,9 @@ class TransferControllerTests {
     @MockitoBean
     private TransferService transferService;
 
+    @MockitoBean
+    private TransferRateLimiter rateLimiter;
+
     @Test
     void aNewTransferReturns201WithItsLocationAndBody() throws Exception {
         TransferRequest request = new TransferRequest("000100000023", "000100000057", new BigDecimal("250.00"), "INR",
