@@ -86,6 +86,7 @@ class AccountServiceTests {
         assertThat(response.maskedAccountNumber()).isEqualTo(NUMBER.masked());
         assertThat(response.ledgerBalance()).isEqualByComparingTo("250.00");
         assertThat(response.availableBalance()).isEqualByComparingTo("200.00");
+        assertThat(response.onHold()).isEqualByComparingTo("50.00");
         assertThat(response.currency()).isEqualTo("INR");
     }
 

@@ -20,5 +20,7 @@ public record TransferResponse(
         String failureReason,
         String createdBy,
         Instant createdAt,
-        Instant completedAt) {
+        Instant completedAt,
+        String decidedBy,
+        String decisionReason) {
 }

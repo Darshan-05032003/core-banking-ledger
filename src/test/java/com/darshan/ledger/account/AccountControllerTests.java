@@ -108,7 +108,8 @@ class AccountControllerTests {
     @Test
     void returnsTheBalanceWithTwoDecimalAmounts() throws Exception {
         given(accountService.balance(10L)).willReturn(new AccountBalanceResponse(
-                10L, "XXXXXXXX0014", new BigDecimal("1250.00"), new BigDecimal("1000.50"), "INR"));
+                10L, "XXXXXXXX0014", new BigDecimal("1250.00"), new BigDecimal("1000.50"), new BigDecimal("249.50"),
+                "INR"));
 
         mockMvc.perform(get("/api/v1/accounts/10/balance"))
                 .andExpect(status().isOk())
@@ -116,7 +117,8 @@ class AccountControllerTests {
                 .andExpect(jsonPath("$.maskedAccountNumber").value("XXXXXXXX0014"))
                 .andExpect(jsonPath("$.currency").value("INR"))
                 .andExpect(content().string(containsString("\"ledgerBalance\":1250.00")))
-                .andExpect(content().string(containsString("\"availableBalance\":1000.50")));
+                .andExpect(content().string(containsString("\"availableBalance\":1000.50")))
+                .andExpect(content().string(containsString("\"onHold\":249.50")));
     }
 
     @Test

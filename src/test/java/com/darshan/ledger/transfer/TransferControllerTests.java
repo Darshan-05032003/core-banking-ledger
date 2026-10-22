@@ -205,6 +205,6 @@ class TransferControllerTests {
         Instant now = Instant.parse("2026-10-22T10:15:30Z");
         return new TransferResponse(12L, "TRF-0000000012", TransferStatus.COMPLETED, 23L, "XXXXXXXX0023", 57L,
                 "XXXXXXXX0057", new BigDecimal("250.00"), "INR", "Rent", 40L, "JRN-0000000040", null, null, "user",
-                now, now);
+                now, now, null, null);
     }
 }

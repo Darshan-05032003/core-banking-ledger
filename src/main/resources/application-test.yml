@@ -7,6 +7,8 @@ logging:
     com.darshan.ledger: DEBUG
 
 app:
+  scheduling:
+    enabled: false
   ledger:
     lock-timeout: 2s
   security:

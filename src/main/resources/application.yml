@@ -28,6 +28,8 @@ logging:
     correlation: "[%X{correlationId:-}] "
 
 app:
+  scheduling:
+    enabled: ${APP_SCHEDULING_ENABLED:true}
   account:
     branch-code: ${APP_ACCOUNT_BRANCH_CODE:0001}
     default-currency: ${APP_ACCOUNT_DEFAULT_CURRENCY:INR}
@@ -41,6 +43,7 @@ app:
   approval:
     threshold: ${APP_APPROVAL_THRESHOLD:200000.00}
     pending-expiry: ${APP_APPROVAL_PENDING_EXPIRY:24h}
+    expiry-cron: ${APP_APPROVAL_EXPIRY_CRON:0 * * * * *}
   interest:
     savings-annual-rate: ${APP_INTEREST_SAVINGS_ANNUAL_RATE:0.0350}
     accrual-cron: ${APP_INTEREST_ACCRUAL_CRON:0 30 0 * * *}
