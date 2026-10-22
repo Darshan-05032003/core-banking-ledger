@@ -38,7 +38,7 @@ public class StatementRepository {
     // The window runs over the whole period, so a page that starts in the middle of it still
     // carries the balance of everything before it; the keyset predicate and the limit are applied
     // outside the window, where they cannot shorten what the sum sees.
-    private static final String LINES_SQL = """
+    static final String LINES_SQL = """
             WITH opening AS (
                 SELECT COALESCE(SUM(%1$s), 0) AS balance
                 FROM ledger_entry
@@ -72,8 +72,8 @@ public class StatementRepository {
             ) cp ON TRUE
             """.formatted(SIGNED_AMOUNT);
 
-    private static final String AFTER_CURSOR = "WHERE (r.posted_at, r.id) > (:cursorPostedAt, :cursorEntryId)\n";
-    private static final String ORDER = "ORDER BY r.posted_at, r.id\n";
+    static final String AFTER_CURSOR = "WHERE (r.posted_at, r.id) > (:cursorPostedAt, :cursorEntryId)\n";
+    static final String ORDER = "ORDER BY r.posted_at, r.id\n";
 
     private static final RowMapper<StatementLine> LINE_MAPPER = StatementRepository::mapLine;
 
