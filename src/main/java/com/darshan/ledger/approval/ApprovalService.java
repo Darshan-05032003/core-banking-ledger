@@ -40,7 +40,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class ApprovalService {
 
     private static final Logger log = LoggerFactory.getLogger(ApprovalService.class);
-    private static final int MAX_PAGE_SIZE = 100;
 
     private final TransferRepository transferRepository;
     private final HoldRepository holdRepository;
@@ -107,7 +106,7 @@ public class ApprovalService {
     @Transactional(readOnly = true)
     public PageResponse<TransferResponse> list(TransferStatus status, int page, int size) {
         return PageResponse.of(transferRepository
-                .findByStatusOrderByCreatedAtAscIdAsc(status, PageRequest.of(page, Math.min(size, MAX_PAGE_SIZE)))
+                .findByStatusOrderByCreatedAtAscIdAsc(status, PageRequest.of(page, size))
                 .map(transferMapper::toResponse));
     }
 
