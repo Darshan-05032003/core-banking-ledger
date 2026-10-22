@@ -4,7 +4,9 @@ import com.darshan.ledger.common.web.CorrelationIdFilter;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.MDC;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -38,6 +40,16 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         log.info("Optimistic lock conflict: {}", ex.getMessage());
         return respond(problem(HttpStatus.CONFLICT, CommonErrorCode.CONFLICT,
                 "The record was modified by another request, please retry"), request);
+    }
+
+    // Reached only when two requests race past a service-level existence check; the services
+    // report the common case with a specific error code first. The database message is not
+    // logged because it repeats the offending values, which may be personal data.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<Object> handleDataIntegrity(DataIntegrityViolationException ex, WebRequest request) {
+        log.info("Request rejected by database constraint {}", constraintName(ex));
+        return respond(problem(HttpStatus.CONFLICT, CommonErrorCode.CONFLICT,
+                "The request conflicts with existing data"), request);
     }
 
     // Without this handler the catch-all below would turn method-security denials into 500s.
@@ -89,6 +101,14 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         problem.setTitle(status.getReasonPhrase());
         problem.setProperty(ERROR_CODE, errorCode.code());
         return problem;
+    }
+
+    private static String constraintName(DataIntegrityViolationException ex) {
+        if (ex.getCause() instanceof ConstraintViolationException violation
+                && violation.getConstraintName() != null) {
+            return violation.getConstraintName();
+        }
+        return "unknown";
     }
 
     private static ErrorCode defaultErrorCode(HttpStatusCode status) {
