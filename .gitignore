@@ -1,0 +1,27 @@
+# Build output
+target/
+
+# Environment and secrets
+.env
+*.pem
+*.p12
+*.jks
+
+# Logs and runtime data
+*.log
+logs/
+data/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
