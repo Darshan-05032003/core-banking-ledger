@@ -5,6 +5,10 @@ import org.springframework.http.HttpStatus;
 public class ConflictException extends LedgerException {
 
     public ConflictException(String message) {
-        super(HttpStatus.CONFLICT, CommonErrorCode.CONFLICT, message);
+        this(CommonErrorCode.CONFLICT, message);
+    }
+
+    public ConflictException(ErrorCode errorCode, String message) {
+        super(HttpStatus.CONFLICT, errorCode, message);
     }
 }

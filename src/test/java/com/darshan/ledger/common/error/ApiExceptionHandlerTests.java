@@ -1,7 +1,9 @@
 package com.darshan.ledger.common.error;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
@@ -121,6 +124,16 @@ class ApiExceptionHandlerTests {
     }
 
     @Test
+    void databaseConstraintViolationReturns409WithoutTheDatabaseMessage() throws Exception {
+        mockMvc.perform(get("/test/errors/constraint").header(CorrelationIdFilter.HEADER, CORRELATION_ID))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("CONFLICT"))
+                .andExpect(jsonPath("$.detail").value("The request conflicts with existing data"))
+                .andExpect(jsonPath("$.correlationId").value(CORRELATION_ID))
+                .andExpect(content().string(not(containsString("dup@example.com"))));
+    }
+
+    @Test
     void businessRuleViolationReturns422WithTheRulesErrorCode() throws Exception {
         mockMvc.perform(get("/test/errors/business-rule").header(CorrelationIdFilter.HEADER, CORRELATION_ID))
                 .andExpect(status().isUnprocessableEntity())
@@ -201,6 +214,12 @@ class ApiExceptionHandlerTests {
         @GetMapping("/stale-update")
         void staleUpdate() {
             throw new OptimisticLockingFailureException("row version changed");
+        }
+
+        @GetMapping("/constraint")
+        void constraint() {
+            throw new DataIntegrityViolationException(
+                    "duplicate key value violates unique constraint: Key (email)=(dup@example.com)");
         }
 
         @GetMapping("/business-rule")

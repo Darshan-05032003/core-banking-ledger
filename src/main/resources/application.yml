@@ -28,6 +28,9 @@ logging:
     correlation: "[%X{correlationId:-}] "
 
 app:
+  account:
+    branch-code: ${APP_ACCOUNT_BRANCH_CODE:0001}
+    default-currency: ${APP_ACCOUNT_DEFAULT_CURRENCY:INR}
   limits:
     per-transaction: ${APP_LIMITS_PER_TRANSACTION:500000.00}
     daily: ${APP_LIMITS_DAILY:2000000.00}

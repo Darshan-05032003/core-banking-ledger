@@ -2,6 +2,7 @@ package com.darshan.ledger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.darshan.ledger.account.AccountProperties;
 import com.darshan.ledger.approval.ApprovalProperties;
 import com.darshan.ledger.interest.InterestProperties;
 import com.darshan.ledger.security.SecurityProperties;
@@ -26,6 +27,10 @@ class ApplicationPropertiesTests {
     void bindsLocalDefaultsFromApplicationYaml() {
         runner.run(context -> {
             assertThat(context).hasNotFailed();
+
+            AccountProperties account = context.getBean(AccountProperties.class);
+            assertThat(account.branchCode()).isEqualTo("0001");
+            assertThat(account.defaultCurrency()).isEqualTo("INR");
 
             TransferLimitsProperties limits = context.getBean(TransferLimitsProperties.class);
             assertThat(limits.perTransaction()).isEqualByComparingTo(new BigDecimal("500000.00"));
@@ -58,6 +63,8 @@ class ApplicationPropertiesTests {
 
     @ParameterizedTest
     @ValueSource(strings = {
+            "app.account.branch-code=12",
+            "app.account.default-currency=inr",
             "app.limits.per-transaction=-1",
             "app.limits.per-transaction=0.00",
             "app.limits.daily=1.00",
@@ -76,6 +83,7 @@ class ApplicationPropertiesTests {
     }
 
     @EnableConfigurationProperties({
+            AccountProperties.class,
             TransferLimitsProperties.class,
             ApprovalProperties.class,
             InterestProperties.class,
