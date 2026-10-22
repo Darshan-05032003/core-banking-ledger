@@ -44,7 +44,12 @@ public record AccountNumber(String value) {
     }
 
     public String masked() {
-        return PiiMasker.maskAccountNumber(value);
+        return mask(value);
+    }
+
+    // For numbers that failed validation and therefore never became an AccountNumber.
+    public static String mask(String rawNumber) {
+        return PiiMasker.maskAccountNumber(rawNumber);
     }
 
     // The masked form is what ends up in logs and error messages by default.
