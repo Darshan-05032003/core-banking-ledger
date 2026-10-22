@@ -1,5 +1,6 @@
 package com.darshan.ledger.auth;
 
+import com.darshan.ledger.audit.Audited;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +26,8 @@ public class AppUserController {
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "USER_CREATE", targetType = "APP_USER", targetId = "#result?.id()",
+            details = "{username: #request.username(), roles: #request.roles(), customerId: #request.customerId()}")
     public ResponseEntity<AppUserResponse> create(@Valid @RequestBody CreateUserRequest request) {
         AppUserResponse user = appUserService.create(request);
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
@@ -42,18 +45,22 @@ public class AppUserController {
 
     @PutMapping("/{userId}/customer")
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "USER_LINK_CUSTOMER", targetType = "APP_USER", targetId = "#userId",
+            details = "{customerId: #request.customerId()}")
     public AppUserResponse linkCustomer(@PathVariable Long userId, @Valid @RequestBody LinkCustomerRequest request) {
         return appUserService.linkCustomer(userId, request);
     }
 
     @PostMapping("/{userId}/disable")
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "USER_DISABLE", targetType = "APP_USER", targetId = "#userId")
     public AppUserResponse disable(@PathVariable Long userId) {
         return appUserService.disable(userId);
     }
 
     @PostMapping("/{userId}/enable")
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "USER_ENABLE", targetType = "APP_USER", targetId = "#userId")
     public AppUserResponse enable(@PathVariable Long userId) {
         return appUserService.enable(userId);
     }

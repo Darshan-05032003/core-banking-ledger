@@ -1,5 +1,6 @@
 package com.darshan.ledger.ledger;
 
+import com.darshan.ledger.audit.Audited;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -28,6 +29,8 @@ public class JournalController {
 
     @PostMapping("/api/v1/journals/{journalId}/reversal")
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "JOURNAL_REVERSAL", targetType = "JOURNAL", targetId = "#journalId",
+            details = "{reason: #request.reason(), reversalJournalId: #result?.id()}")
     public ResponseEntity<JournalResponse> reverse(@PathVariable Long journalId,
             @Valid @RequestBody ReversalRequest request) {
         JournalResponse reversal = journalService.reverse(journalId, request);

@@ -18,7 +18,7 @@ import org.springframework.test.context.ActiveProfiles;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import({TestcontainersConfiguration.class, FixedClockConfiguration.class, TestAccounts.class})
+@Import({TestcontainersConfiguration.class, FixedClockConfiguration.class, TestAccounts.class, TestUsers.class})
 @WithMockUser(roles = "ADMIN")
 public @interface IntegrationTest {
 }

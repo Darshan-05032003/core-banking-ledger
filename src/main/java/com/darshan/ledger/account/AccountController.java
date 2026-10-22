@@ -1,5 +1,6 @@
 package com.darshan.ledger.account;
 
+import com.darshan.ledger.audit.Audited;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
@@ -55,18 +56,21 @@ public class AccountController {
 
     @PostMapping("/api/v1/accounts/{accountId}/freeze")
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "ACCOUNT_FREEZE", targetType = "ACCOUNT", targetId = "#accountId")
     public AccountResponse freeze(@PathVariable Long accountId) {
         return accountService.freeze(accountId);
     }
 
     @PostMapping("/api/v1/accounts/{accountId}/unfreeze")
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "ACCOUNT_UNFREEZE", targetType = "ACCOUNT", targetId = "#accountId")
     public AccountResponse unfreeze(@PathVariable Long accountId) {
         return accountService.unfreeze(accountId);
     }
 
     @PostMapping("/api/v1/accounts/{accountId}/close")
     @PreAuthorize("hasRole('ADMIN')")
+    @Audited(action = "ACCOUNT_CLOSE", targetType = "ACCOUNT", targetId = "#accountId")
     public AccountResponse close(@PathVariable Long accountId) {
         return accountService.close(accountId);
     }

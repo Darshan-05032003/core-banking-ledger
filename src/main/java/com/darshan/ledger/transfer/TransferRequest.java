@@ -1,5 +1,6 @@
 package com.darshan.ledger.transfer;
 
+import com.darshan.ledger.account.AccountNumber;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -24,5 +25,13 @@ public record TransferRequest(
         String trimmedRemarks = remarks == null || remarks.isBlank() ? null : remarks.trim();
         return new TransferRequest(fromAccount, toAccount, amount.setScale(2, RoundingMode.UNNECESSARY), currency,
                 trimmedRemarks);
+    }
+
+    public String maskedFromAccount() {
+        return AccountNumber.mask(fromAccount);
+    }
+
+    public String maskedToAccount() {
+        return AccountNumber.mask(toAccount);
     }
 }

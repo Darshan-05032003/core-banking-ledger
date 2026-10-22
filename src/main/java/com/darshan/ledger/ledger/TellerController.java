@@ -1,5 +1,6 @@
 package com.darshan.ledger.ledger;
 
+import com.darshan.ledger.audit.Audited;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,8 @@ public class TellerController {
 
     @PostMapping("/api/v1/accounts/{accountId}/deposits")
     @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
+    @Audited(action = "DEPOSIT", targetType = "ACCOUNT", targetId = "#accountId",
+            details = "{amount: #request.amount(), currency: #request.currency()}")
     public ResponseEntity<CashOperationResponse> deposit(@PathVariable Long accountId,
             @Valid @RequestBody CashRequest request) {
         return created(tellerService.deposit(accountId, request));
@@ -28,6 +31,8 @@ public class TellerController {
 
     @PostMapping("/api/v1/accounts/{accountId}/withdrawals")
     @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
+    @Audited(action = "WITHDRAWAL", targetType = "ACCOUNT", targetId = "#accountId",
+            details = "{amount: #request.amount(), currency: #request.currency()}")
     public ResponseEntity<CashOperationResponse> withdraw(@PathVariable Long accountId,
             @Valid @RequestBody CashRequest request) {
         return created(tellerService.withdraw(accountId, request));

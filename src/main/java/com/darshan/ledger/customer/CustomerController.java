@@ -1,5 +1,6 @@
 package com.darshan.ledger.customer;
 
+import com.darshan.ledger.audit.Audited;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -43,12 +44,15 @@ public class CustomerController {
 
     @PostMapping("/{customerId}/kyc/verify")
     @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
+    @Audited(action = "KYC_VERIFY", targetType = "CUSTOMER", targetId = "#customerId")
     public CustomerResponse verifyKyc(@PathVariable Long customerId) {
         return customerService.verifyKyc(customerId);
     }
 
     @PostMapping("/{customerId}/kyc/reject")
     @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
+    @Audited(action = "KYC_REJECT", targetType = "CUSTOMER", targetId = "#customerId",
+            details = "{reason: #request.reason()}")
     public CustomerResponse rejectKyc(@PathVariable Long customerId, @Valid @RequestBody RejectKycRequest request) {
         return customerService.rejectKyc(customerId, request);
     }
