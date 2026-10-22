@@ -73,9 +73,7 @@ public class TransferProcessor {
 
         TransferContext context = new TransferContext(request, amount, sender, beneficiary,
                 sender == null ? null : balances.get(sender.getId()));
-        TransferAttempt attempt = accounts.size() == 2
-                ? new TransferAttempt(sender.getId(), beneficiary.getId(), amount, request.remarks())
-                : null;
+        TransferAttempt attempt = attemptOf(sender, beneficiary, amount, request.remarks());
         if (ruleChain.evaluate(context) instanceof TransferRuleResult.Rejected rejected) {
             throw TransferRejectedException.byRule(rejected, attempt);
         }
@@ -100,6 +98,15 @@ public class TransferProcessor {
         } catch (LedgerException ex) {
             throw TransferRejectedException.wrap(ex, attempt);
         }
+    }
+
+    // A transfer row needs two distinct, real accounts; a request that fails that shape is refused
+    // at the door and remembered only by its idempotency key.
+    private static TransferAttempt attemptOf(Account sender, Account beneficiary, Money amount, String remarks) {
+        if (sender == null || beneficiary == null || sender.getId().equals(beneficiary.getId())) {
+            return null;
+        }
+        return new TransferAttempt(sender.getId(), beneficiary.getId(), amount, remarks);
     }
 
     private static AccountNumber parse(String number, String role) {

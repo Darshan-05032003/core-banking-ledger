@@ -179,6 +179,19 @@ class TransferProcessorTests {
     }
 
     @Test
+    void theSameAccountOnBothSidesLeavesNoAttemptToRecord() {
+        given(accountRepository.findByAccountNumber(sender.getAccountNumber())).willReturn(Optional.of(sender));
+        given(postingService.lockBalances(List.of(sender, sender))).willReturn(Map.of(2L, senderBalance));
+        given(ruleChain.evaluate(any())).willReturn(TransferRuleResult.rejected(TransferErrorCode.SAME_ACCOUNT,
+                "A transfer needs two different accounts"));
+
+        assertThatThrownBy(() -> processor.process(7L, new TransferRequest(sender.getAccountNumber().value(),
+                sender.getAccountNumber().value(), new BigDecimal("10.00"), "INR", null)))
+                .isInstanceOf(TransferRejectedException.class)
+                .satisfies(ex -> assertThat(((TransferRejectedException) ex).attempt()).isEmpty());
+    }
+
+    @Test
     void anAccountNumberWithABadCheckDigitIsRejectedBeforeAnyLookup() {
         String corrupted = flipLastDigit(beneficiary.getAccountNumber().value());
 
