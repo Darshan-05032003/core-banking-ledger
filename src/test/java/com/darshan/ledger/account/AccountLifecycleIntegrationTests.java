@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -51,7 +50,7 @@ class AccountLifecycleIntegrationTests {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errorCode").value("CUSTOMER_NOT_VERIFIED"));
 
-        mockMvc.perform(post("/api/v1/customers/{id}/kyc/verify", customerId).with(csrf()))
+        mockMvc.perform(post("/api/v1/customers/{id}/kyc/verify", customerId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kycStatus").value("VERIFIED"))
                 .andExpect(jsonPath("$.kycDecidedAt").value(NOW.toString()));
@@ -115,14 +114,14 @@ class AccountLifecycleIntegrationTests {
     void rejectedKycBlocksNewAccountsAndRecordsTheReason() throws Exception {
         long customerId = onboardVerified();
 
-        mockMvc.perform(post("/api/v1/customers/{id}/kyc/reject", customerId).with(csrf())
+        mockMvc.perform(post("/api/v1/customers/{id}/kyc/reject", customerId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"Address proof expired\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kycStatus").value(KycStatus.REJECTED.name()))
                 .andExpect(jsonPath("$.kycReason").value("Address proof expired"));
 
-        mockMvc.perform(post("/api/v1/customers/{id}/kyc/reject", customerId).with(csrf())
+        mockMvc.perform(post("/api/v1/customers/{id}/kyc/reject", customerId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"Again\"}"))
                 .andExpect(status().isConflict())
@@ -166,13 +165,13 @@ class AccountLifecycleIntegrationTests {
         long customerId = idOf(onboard("Meera Shah", uniqueEmail(), "9876501234", "1992-02-02")
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString());
-        mockMvc.perform(post("/api/v1/customers/{id}/kyc/verify", customerId).with(csrf()))
+        mockMvc.perform(post("/api/v1/customers/{id}/kyc/verify", customerId))
                 .andExpect(status().isOk());
         return customerId;
     }
 
     private ResultActions onboard(String name, String email, String phone, String dateOfBirth) throws Exception {
-        return mockMvc.perform(post("/api/v1/customers").with(csrf())
+        return mockMvc.perform(post("/api/v1/customers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"fullName":"%s","email":"%s","phone":"%s","dateOfBirth":"%s"}
@@ -181,13 +180,13 @@ class AccountLifecycleIntegrationTests {
 
     private ResultActions openAccount(long customerId, String type, String currency) throws Exception {
         String currencyField = currency == null ? "" : ",\"currency\":\"" + currency + "\"";
-        return mockMvc.perform(post("/api/v1/accounts").with(csrf())
+        return mockMvc.perform(post("/api/v1/accounts")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"customerId\":" + customerId + ",\"type\":\"" + type + "\"" + currencyField + "}"));
     }
 
     private ResultActions transition(long accountId, String action) throws Exception {
-        return mockMvc.perform(post("/api/v1/accounts/{id}/{action}", accountId, action).with(csrf()));
+        return mockMvc.perform(post("/api/v1/accounts/{id}/{action}", accountId, action));
     }
 
     private static long idOf(String body) {

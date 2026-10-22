@@ -31,7 +31,19 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(LedgerException.class)
     ResponseEntity<Object> handleLedgerException(LedgerException ex, WebRequest request) {
         log.info("Request rejected: {} {}", ex.getErrorCode().code(), ex.getMessage());
-        return respond(ProblemDetails.of(ex), request);
+        HttpHeaders headers = new HttpHeaders();
+        if (ex.getStatus() == HttpStatus.UNAUTHORIZED) {
+            headers.set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
+        }
+        return createResponseEntity(ProblemDetails.of(ex), headers, ex.getStatus(), request);
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    ResponseEntity<Object> handleRateLimit(RateLimitExceededException ex, WebRequest request) {
+        log.info("Request rejected: {} {}", ex.getErrorCode().code(), ex.getMessage());
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.RETRY_AFTER, String.valueOf(ex.retryAfterSeconds()));
+        return createResponseEntity(ProblemDetails.of(ex), headers, ex.getStatus(), request);
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

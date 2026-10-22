@@ -7,6 +7,7 @@ public enum CommonErrorCode implements ErrorCode {
     CONFLICT,
     LOCK_TIMEOUT,
     ACCESS_DENIED,
+    RATE_LIMIT_EXCEEDED,
     INTERNAL_ERROR;
 
     @Override

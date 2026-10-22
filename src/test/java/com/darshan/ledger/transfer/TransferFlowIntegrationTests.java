@@ -6,7 +6,6 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -234,12 +233,12 @@ class TransferFlowIntegrationTests {
         String from = testAccounts.accountNumber(senderId);
         String to = testAccounts.accountNumber(beneficiaryId);
 
-        mockMvc.perform(post("/api/v1/accounts/{id}/freeze", beneficiaryId).with(csrf())).andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/accounts/{id}/freeze", beneficiaryId)).andExpect(status().isOk());
         transfer(UUID.randomUUID().toString(), from, to, "10.00", "INR", null)
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errorCode").value("ACCOUNT_NOT_ACTIVE"))
                 .andExpect(jsonPath("$.detail").value(containsString("Beneficiary account XXXXXXXX" + to.substring(8))));
-        mockMvc.perform(post("/api/v1/accounts/{id}/unfreeze", beneficiaryId).with(csrf())).andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/accounts/{id}/unfreeze", beneficiaryId)).andExpect(status().isOk());
 
         transfer(UUID.randomUUID().toString(), from, testAccounts.accountNumber(dollarAccountId), "10.00", "INR", null)
                 .andExpect(status().isUnprocessableEntity())
@@ -280,7 +279,7 @@ class TransferFlowIntegrationTests {
     private ResultActions transfer(String key, String from, String to, String amount, String currency, String remarks)
             throws Exception {
         String remarksField = remarks == null ? "" : ",\"remarks\":\"" + remarks + "\"";
-        var request = post("/api/v1/transfers").with(csrf())
+        var request = post("/api/v1/transfers")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"fromAccount\":\"" + from + "\",\"toAccount\":\"" + to + "\",\"amount\":" + amount
                         + ",\"currency\":\"" + currency + "\"" + remarksField + "}");

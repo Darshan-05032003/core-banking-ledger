@@ -35,7 +35,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(TransferController.class)
-@WithMockUser
+@WithMockUser(roles = "CUSTOMER")
 class TransferControllerTests {
 
     private static final String BODY = "{\"fromAccount\":\"000100000023\",\"toAccount\":\"000100000057\","
@@ -46,6 +46,9 @@ class TransferControllerTests {
 
     @MockitoBean
     private TransferService transferService;
+
+    @MockitoBean
+    private TransferRateLimiter rateLimiter;
 
     @Test
     void aNewTransferReturns201WithItsLocationAndBody() throws Exception {

@@ -11,13 +11,14 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 
 // One shared application context for every full-stack test: real PostgreSQL in a container, a
-// fixed clock and an authenticated mock user, so the context (and the container) start once.
+// fixed clock and a mock ADMIN user (who may call everything), so the context and the container
+// start once. Tests about roles and ownership obtain real tokens instead.
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import({TestcontainersConfiguration.class, FixedClockConfiguration.class, TestAccounts.class})
-@WithMockUser
+@Import({TestcontainersConfiguration.class, FixedClockConfiguration.class, TestAccounts.class, TestUsers.class})
+@WithMockUser(roles = "ADMIN")
 public @interface IntegrationTest {
 }

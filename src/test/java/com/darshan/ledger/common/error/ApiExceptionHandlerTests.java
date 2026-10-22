@@ -17,6 +17,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -155,6 +156,17 @@ class ApiExceptionHandlerTests {
     }
 
     @Test
+    void rateLimitReturns429WithRetryAfterInWholeSecondsRoundedUp() throws Exception {
+        mockMvc.perform(get("/test/errors/rate-limited").header(CorrelationIdFilter.HEADER, CORRELATION_ID))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "3"))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("RATE_LIMIT_EXCEEDED"))
+                .andExpect(jsonPath("$.retryAfterSeconds").value(3))
+                .andExpect(jsonPath("$.correlationId").value(CORRELATION_ID));
+    }
+
+    @Test
     void accessDeniedInsideAControllerReturns403NotInternalError() throws Exception {
         mockMvc.perform(get("/test/errors/access-denied"))
                 .andExpect(status().isForbidden())
@@ -242,6 +254,11 @@ class ApiExceptionHandlerTests {
         void businessRule() {
             throw new BusinessRuleException(TestErrorCode.INSUFFICIENT_FUNDS,
                     "Available balance is lower than the transfer amount");
+        }
+
+        @GetMapping("/rate-limited")
+        void rateLimited() {
+            throw new RateLimitExceededException(Duration.ofMillis(2_500));
         }
 
         @GetMapping("/access-denied")

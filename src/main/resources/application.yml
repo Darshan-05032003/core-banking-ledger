@@ -48,5 +48,7 @@ app:
     jwt:
       issuer: ${APP_SECURITY_JWT_ISSUER:core-banking-ledger}
       access-token-ttl: ${APP_SECURITY_JWT_ACCESS_TOKEN_TTL:15m}
+      private-key: ${APP_SECURITY_JWT_PRIVATE_KEY:}
+      public-key: ${APP_SECURITY_JWT_PUBLIC_KEY:}
     rate-limit:
       transfers-per-minute: ${APP_SECURITY_RATE_LIMIT_TRANSFERS_PER_MINUTE:20}

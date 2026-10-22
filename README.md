@@ -29,30 +29,66 @@ Application settings live under the `app.*` prefix and are bound to validated `@
 | `app.limits` | Per-transaction and daily transfer limits |
 | `app.approval` | Maker-checker threshold and expiry of pending transfers |
 | `app.interest` | Savings interest rate and accrual schedule |
-| `app.security` | JWT issuer, token lifetime and transfer rate limit |
+| `app.security` | JWT issuer, token lifetime, signing key pair and transfer rate limit |
+
+## Authentication and roles
+
+The application is an OAuth2 resource server for tokens it issues itself. `POST /api/v1/auth/token` with `{"username", "password"}` checks the password against the BCrypt hash in `app_user` and returns a short-lived JWT signed with RS256:
+
+```json
+{ "accessToken": "eyJ...", "tokenType": "Bearer", "expiresIn": 900, "expiresAt": "2026-10-22T10:30:30Z" }
+```
+
+Every other endpoint expects `Authorization: Bearer <token>`. The token carries the username, the roles and, for a customer login, the linked customer id, so no request after login touches the user table. Sessions and CSRF protection are off: there is no cookie for a cross-site request to ride on. A missing or invalid token is answered with 401 and a `WWW-Authenticate: Bearer` header; a valid token without the required role gets 403. Both carry the same problem body as every other error.
+
+The signing key pair comes from `APP_SECURITY_JWT_PRIVATE_KEY` and `APP_SECURITY_JWT_PUBLIC_KEY` (PEM text or a `file:` location). In the `prod` profile the application refuses to start without them; `dev` and `test` generate a throwaway pair at start-up, so tokens do not survive a restart there. Keys are never committed. The `dev` profile also seeds one ADMIN user from `APP_ADMIN_USERNAME` and `APP_ADMIN_PASSWORD`, which is how the first users of a fresh database are created.
+
+| Role | May |
+|---|---|
+| `CUSTOMER` | Read its own customer record, accounts and balances; send transfers from its own accounts and read them. A customer login is linked to exactly one customer id by an admin. |
+| `TELLER` | Onboard customers, decide KYC, open accounts, deposit and withdraw cash, read accounts, journals and transfers |
+| `CHECKER` | Read customers, accounts, journals and transfers; approves high-value transfers once maker-checker exists |
+| `ADMIN` | Everything above, plus freeze, unfreeze and close accounts, reverse journals, manage users and read all actuator endpoints |
+
+Role rules live on each controller method with `@PreAuthorize`. Ownership is decided by small beans referenced from the expression, for example `@accountAccess.isOwner(#accountId, authentication)`, which run one existence query against the customer id in the token; an account that is not the caller's is reported as 403 whether or not it exists.
+
+## Audit trail
+
+Every money movement (deposit, withdrawal, reversal, transfer) and every administrative action (KYC decision, freeze, unfreeze, close, user management) writes a row to `audit_log`: actor, roles, action, target type and id, outcome `SUCCESS` or `FAILURE`, the error code of a failure, client IP, correlation id, timestamp and a JSON `details` column with the business values of the request (amounts, masked account numbers, reasons; never passwords or full account numbers). The controller methods are marked `@Audited`, and an aspect writes the row after the method has returned or thrown, in its own transaction, so a withdrawal refused for insufficient funds or a freeze attempted by a teller without the right role is on record just like a successful one. Database triggers make `audit_log` append-only, as for the ledger tables.
+
+## Rate limiting
+
+`POST /api/v1/transfers` is limited per user to `app.security.rate-limit.transfers-per-minute` (default 20) with a token bucket that refills continuously. A request over the limit is answered with 429, `errorCode` `RATE_LIMIT_EXCEEDED`, a `Retry-After` header in seconds and the same value as `retryAfterSeconds` in the body. The buckets are in memory, so each instance of the application counts on its own.
 
 ## API
 
-All endpoints are under `/api/v1`. Role-based access rules are added together with JWT authentication; until then the endpoints sit behind Spring Security's default authentication.
+All endpoints are under `/api/v1`. The last column lists who may call the endpoint; "owner" means a `CUSTOMER` login linked to the customer the record belongs to.
 
-| Method and path | Purpose |
-|---|---|
-| `POST /customers` | Onboard a customer (full name, email, phone, date of birth); KYC starts as `PENDING` |
-| `GET /customers/{id}` | Fetch a customer |
-| `POST /customers/{id}/kyc/verify` | Mark KYC as `VERIFIED` |
-| `POST /customers/{id}/kyc/reject` | Mark KYC as `REJECTED` with a reason |
-| `GET /customers/{id}/accounts` | List the customer's accounts |
-| `POST /accounts` | Open a `SAVINGS` or `CURRENT` account for a KYC-verified customer; currency defaults to `INR` |
-| `GET /accounts/{id}` | Fetch an account |
-| `POST /accounts/{id}/freeze`, `/unfreeze` | Block or unblock an account |
-| `POST /accounts/{id}/close` | Close an account; allowed only when the balance is exactly zero and nothing is on hold |
-| `GET /accounts/{id}/balance` | Ledger and available balance of an account |
-| `POST /accounts/{id}/deposits` | Teller cash deposit (`amount`, `currency`, optional `remarks`) into an `ACTIVE` account |
-| `POST /accounts/{id}/withdrawals` | Teller cash withdrawal; refused with `INSUFFICIENT_FUNDS` when the available balance is too low |
-| `GET /journals/{id}` | A posted journal with its ledger lines |
-| `POST /journals/{id}/reversal` | Correct a journal by posting the opposite legs (`reason` required); each journal can be reversed once |
-| `POST /transfers` | Move money between two customer accounts (`fromAccount`, `toAccount`, `amount`, `currency`, optional `remarks`); requires an `Idempotency-Key` header |
-| `GET /transfers/{id}` | A transfer attempt, completed or failed |
+| Method and path | Purpose | Roles |
+|---|---|---|
+| `POST /auth/token` | Exchange username and password for an access token | anyone |
+| `POST /customers` | Onboard a customer (full name, email, phone, date of birth); KYC starts as `PENDING` | TELLER, ADMIN |
+| `GET /customers/{id}` | Fetch a customer | staff, owner |
+| `POST /customers/{id}/kyc/verify` | Mark KYC as `VERIFIED` | TELLER, ADMIN |
+| `POST /customers/{id}/kyc/reject` | Mark KYC as `REJECTED` with a reason | TELLER, ADMIN |
+| `GET /customers/{id}/accounts` | List the customer's accounts | staff, owner |
+| `POST /accounts` | Open a `SAVINGS` or `CURRENT` account for a KYC-verified customer; currency defaults to `INR` | TELLER, ADMIN |
+| `GET /accounts/{id}` | Fetch an account | staff, owner |
+| `POST /accounts/{id}/freeze`, `/unfreeze` | Block or unblock an account | ADMIN |
+| `POST /accounts/{id}/close` | Close an account; allowed only when the balance is exactly zero and nothing is on hold | ADMIN |
+| `GET /accounts/{id}/balance` | Ledger and available balance of an account | staff, owner |
+| `POST /accounts/{id}/deposits` | Teller cash deposit (`amount`, `currency`, optional `remarks`) into an `ACTIVE` account | TELLER, ADMIN |
+| `POST /accounts/{id}/withdrawals` | Teller cash withdrawal; refused with `INSUFFICIENT_FUNDS` when the available balance is too low | TELLER, ADMIN |
+| `GET /journals/{id}` | A posted journal with its ledger lines | staff |
+| `POST /journals/{id}/reversal` | Correct a journal by posting the opposite legs (`reason` required); each journal can be reversed once | ADMIN |
+| `POST /transfers` | Move money between two customer accounts (`fromAccount`, `toAccount`, `amount`, `currency`, optional `remarks`); requires an `Idempotency-Key` header | owner of `fromAccount`, ADMIN |
+| `GET /transfers/{id}` | A transfer attempt, completed or failed | staff, owner of the sending account |
+| `POST /admin/users` | Create a login (`username`, `password`, `roles`, optional `customerId` for a `CUSTOMER`) | ADMIN |
+| `GET /admin/users/{id}` | Fetch a login; the password hash is never returned | ADMIN |
+| `PUT /admin/users/{id}/customer` | Link a `CUSTOMER` login to a customer id | ADMIN |
+| `POST /admin/users/{id}/disable`, `/enable` | Block or restore a login; a disabled user cannot obtain a token | ADMIN |
+
+"staff" means `TELLER`, `CHECKER` or `ADMIN`.
 
 Account numbers have twelve digits: a four-digit branch code (`app.account.branch-code`), a seven-digit sequence drawn from a database sequence and a Luhn check digit, so a mistyped digit is detected before any lookup. Responses and logs never contain full account numbers, phone numbers or email addresses; they are masked as `XXXXXXXX4821` and `a***@example.com`.
 
@@ -92,7 +128,7 @@ Errors are returned as RFC 9457 `application/problem+json` documents. Every body
 }
 ```
 
-Validation failures (400) add an `errors` array of `{ "field", "message" }` entries. Unexpected failures return 500 with a generic message and no internal details.
+Validation failures (400) add an `errors` array of `{ "field", "message" }` entries. Authentication failures use 401 (`AUTHENTICATION_REQUIRED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS`, `USER_DISABLED`), authorisation failures 403 (`ACCESS_DENIED`) and the transfer rate limit 429 (`RATE_LIMIT_EXCEEDED`). Unexpected failures return 500 with a generic message and no internal details.
 
 ## Tests
 
@@ -100,4 +136,4 @@ Validation failures (400) add an `errors` array of `{ "field", "message" }` entr
 ./mvnw clean verify
 ```
 
-Integration tests start PostgreSQL in a Testcontainers container on a random port, so Docker must be running. They include an invariant test that runs a random sequence of deposits, withdrawals and reversals and then checks, with SQL, that every journal balances, that each account balance equals the sum of its ledger lines and that the cash in the vault equals what the bank owes its customers. The transfer tests run 100 concurrent transfers between two accounts and check that the total is conserved, run transfers in both directions at once to show the lock ordering prevents deadlocks, race 50 transfers for a balance that covers ten of them and expect exactly ten to succeed, send concurrent requests with one `Idempotency-Key` and expect a single transfer, and hold a balance row from another transaction to show the lock timeout fires with SQLSTATE `55P03` and that the retry then succeeds.
+Integration tests start PostgreSQL in a Testcontainers container on a random port, so Docker must be running. The security tests obtain real tokens from the token endpoint and run every endpoint against an anonymous caller and each of the four roles, check that a customer is refused on another customer's accounts and transfers, that expired and tampered tokens are rejected, and that audit rows are written for successful, refused and denied attempts and cannot be updated or deleted. They include an invariant test that runs a random sequence of deposits, withdrawals and reversals and then checks, with SQL, that every journal balances, that each account balance equals the sum of its ledger lines and that the cash in the vault equals what the bank owes its customers. The transfer tests run 100 concurrent transfers between two accounts and check that the total is conserved, run transfers in both directions at once to show the lock ordering prevents deadlocks, race 50 transfers for a balance that covers ten of them and expect exactly ten to succeed, send concurrent requests with one `Idempotency-Key` and expect a single transfer, and hold a balance row from another transaction to show the lock timeout fires with SQLSTATE `55P03` and that the retry then succeeds.

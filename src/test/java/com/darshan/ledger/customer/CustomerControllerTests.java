@@ -30,7 +30,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(CustomerController.class)
-@WithMockUser
+@WithMockUser(roles = "TELLER")
 class CustomerControllerTests {
 
     private static final String VALID_BODY = """

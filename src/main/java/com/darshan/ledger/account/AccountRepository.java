@@ -12,4 +12,8 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
     // The customer comes along because the transfer rules look at the sender's KYC status.
     @EntityGraph(attributePaths = "customer")
     Optional<Account> findByAccountNumber(AccountNumber accountNumber);
+
+    boolean existsByIdAndCustomerId(Long id, Long customerId);
+
+    boolean existsByAccountNumberAndCustomerId(AccountNumber accountNumber, Long customerId);
 }
