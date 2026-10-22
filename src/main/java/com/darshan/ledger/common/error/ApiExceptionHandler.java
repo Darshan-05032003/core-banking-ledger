@@ -8,6 +8,7 @@ import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -40,6 +41,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         log.info("Optimistic lock conflict: {}", ex.getMessage());
         return respond(problem(HttpStatus.CONFLICT, CommonErrorCode.CONFLICT,
                 "The record was modified by another request, please retry"), request);
+    }
+
+    // A row lock was not obtained within the configured lock timeout (or, should lock ordering ever
+    // be broken, this transaction was the deadlock victim). Nothing was written; the client can retry.
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    ResponseEntity<Object> handlePessimisticLocking(PessimisticLockingFailureException ex, WebRequest request) {
+        log.warn("Row lock not acquired: {}", ex.getMostSpecificCause().getMessage());
+        return respond(problem(HttpStatus.CONFLICT, CommonErrorCode.LOCK_TIMEOUT,
+                "The account is busy with another operation, please retry"), request);
     }
 
     // Reached only when two requests race past a service-level existence check; the services

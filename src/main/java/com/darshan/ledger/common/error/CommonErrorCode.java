@@ -5,6 +5,7 @@ public enum CommonErrorCode implements ErrorCode {
     MALFORMED_REQUEST,
     RESOURCE_NOT_FOUND,
     CONFLICT,
+    LOCK_TIMEOUT,
     ACCESS_DENIED,
     INTERNAL_ERROR;
 

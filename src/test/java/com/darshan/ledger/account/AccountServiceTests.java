@@ -117,7 +117,7 @@ class AccountServiceTests {
     void closesAnAccountWithZeroBalanceAndNoHolds() {
         Account account = activeAccount();
         given(accountRepository.findById(10L)).willReturn(Optional.of(account));
-        given(accountBalances.snapshot(account)).willReturn(AccountBalanceSnapshot.empty(INR));
+        given(accountBalances.snapshotForUpdate(account)).willReturn(AccountBalanceSnapshot.empty(INR));
 
         AccountResponse response = service.close(10L);
 
@@ -125,13 +125,14 @@ class AccountServiceTests {
         assertThat(account.getClosedOn()).isEqualTo(TODAY);
         assertThat(response.status()).isEqualTo(AccountStatus.CLOSED);
         assertThat(response.closedOn()).isEqualTo(TODAY);
+        verify(accountBalances, never()).snapshot(any());
     }
 
     @Test
     void refusesToCloseWhileMoneyIsOnHold() {
         Account account = activeAccount();
         given(accountRepository.findById(10L)).willReturn(Optional.of(account));
-        given(accountBalances.snapshot(account))
+        given(accountBalances.snapshotForUpdate(account))
                 .willReturn(new AccountBalanceSnapshot(Money.of("250.00", INR), Money.of("200.00", INR)));
 
         assertThatThrownBy(() -> service.close(10L))
@@ -146,7 +147,7 @@ class AccountServiceTests {
     void refusesToCloseWithANonZeroBalance() {
         Account account = activeAccount();
         given(accountRepository.findById(10L)).willReturn(Optional.of(account));
-        given(accountBalances.snapshot(account))
+        given(accountBalances.snapshotForUpdate(account))
                 .willReturn(new AccountBalanceSnapshot(Money.of("0.01", INR), Money.of("0.01", INR)));
 
         assertThatThrownBy(() -> service.close(10L))
@@ -174,7 +175,7 @@ class AccountServiceTests {
         Account account = activeAccount();
         account.close(TODAY);
         given(accountRepository.findById(10L)).willReturn(Optional.of(account));
-        given(accountBalances.snapshot(account)).willReturn(AccountBalanceSnapshot.empty(INR));
+        given(accountBalances.snapshotForUpdate(account)).willReturn(AccountBalanceSnapshot.empty(INR));
 
         assertThatThrownBy(() -> service.freeze(10L)).isInstanceOf(ConflictException.class)
                 .extracting(ex -> ((LedgerException) ex).getErrorCode()).isEqualTo(AccountErrorCode.ACCOUNT_CLOSED);
