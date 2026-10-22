@@ -1,6 +1,8 @@
 spring:
   application:
     name: core-banking-ledger
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/ledger}
     username: ${DB_USERNAME:ledger}
@@ -20,3 +22,24 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+
+logging:
+  pattern:
+    correlation: "[%X{correlationId:-}] "
+
+app:
+  limits:
+    per-transaction: ${APP_LIMITS_PER_TRANSACTION:500000.00}
+    daily: ${APP_LIMITS_DAILY:2000000.00}
+  approval:
+    threshold: ${APP_APPROVAL_THRESHOLD:200000.00}
+    pending-expiry: ${APP_APPROVAL_PENDING_EXPIRY:24h}
+  interest:
+    savings-annual-rate: ${APP_INTEREST_SAVINGS_ANNUAL_RATE:0.0350}
+    accrual-cron: ${APP_INTEREST_ACCRUAL_CRON:0 30 0 * * *}
+  security:
+    jwt:
+      issuer: ${APP_SECURITY_JWT_ISSUER:core-banking-ledger}
+      access-token-ttl: ${APP_SECURITY_JWT_ACCESS_TOKEN_TTL:15m}
+    rate-limit:
+      transfers-per-minute: ${APP_SECURITY_RATE_LIMIT_TRANSFERS_PER_MINUTE:20}

@@ -1,0 +1,4 @@
+logging:
+  level:
+    com.darshan.ledger: DEBUG
+    org.hibernate.SQL: DEBUG

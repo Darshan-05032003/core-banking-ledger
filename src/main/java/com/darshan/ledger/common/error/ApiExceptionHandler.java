@@ -1,0 +1,103 @@
+package com.darshan.ledger.common.error;
+
+import com.darshan.ledger.common.web.CorrelationIdFilter;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+@RestControllerAdvice
+public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
+
+    static final String ERROR_CODE = "errorCode";
+    static final String CORRELATION_ID = "correlationId";
+    static final String ERRORS = "errors";
+
+    @ExceptionHandler(LedgerException.class)
+    ResponseEntity<Object> handleLedgerException(LedgerException ex, WebRequest request) {
+        log.info("Request rejected: {} {}", ex.getErrorCode().code(), ex.getMessage());
+        return respond(problem(ex.getStatus(), ex.getErrorCode(), ex.getMessage()), request);
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    ResponseEntity<Object> handleOptimisticLocking(OptimisticLockingFailureException ex, WebRequest request) {
+        log.info("Optimistic lock conflict: {}", ex.getMessage());
+        return respond(problem(HttpStatus.CONFLICT, CommonErrorCode.CONFLICT,
+                "The record was modified by another request, please retry"), request);
+    }
+
+    // Without this handler the catch-all below would turn method-security denials into 500s.
+    @ExceptionHandler(AccessDeniedException.class)
+    ResponseEntity<Object> handleAccessDenied(AccessDeniedException ex, WebRequest request) {
+        return respond(problem(HttpStatus.FORBIDDEN, CommonErrorCode.ACCESS_DENIED, "Access denied"), request);
+    }
+
+    @ExceptionHandler(Exception.class)
+    ResponseEntity<Object> handleUnexpected(Exception ex, WebRequest request) {
+        log.error("Unhandled exception", ex);
+        return respond(problem(HttpStatus.INTERNAL_SERVER_ERROR, CommonErrorCode.INTERNAL_ERROR,
+                "An unexpected error occurred"), request);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        List<FieldViolation> violations = ex.getBindingResult().getFieldErrors().stream()
+                .map(error -> new FieldViolation(error.getField(), error.getDefaultMessage()))
+                .toList();
+        ProblemDetail body = problem(HttpStatus.BAD_REQUEST, CommonErrorCode.VALIDATION_FAILED,
+                "Request validation failed");
+        body.setProperty(ERRORS, violations);
+        return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    // Every ProblemDetail leaves through here, including the ones the framework builds for
+    // malformed JSON, unsupported methods and unknown paths, so this is where the correlation id
+    // and a default error code are stamped on.
+    @Override
+    protected ResponseEntity<Object> createResponseEntity(Object body, HttpHeaders headers,
+            HttpStatusCode statusCode, WebRequest request) {
+        if (body instanceof ProblemDetail problem) {
+            problem.setProperty(CORRELATION_ID, MDC.get(CorrelationIdFilter.MDC_KEY));
+            if (problem.getProperties() == null || !problem.getProperties().containsKey(ERROR_CODE)) {
+                problem.setProperty(ERROR_CODE, defaultErrorCode(statusCode).code());
+            }
+        }
+        return super.createResponseEntity(body, headers, statusCode, request);
+    }
+
+    private ResponseEntity<Object> respond(ProblemDetail problem, WebRequest request) {
+        return createResponseEntity(problem, new HttpHeaders(), HttpStatusCode.valueOf(problem.getStatus()), request);
+    }
+
+    private static ProblemDetail problem(HttpStatus status, ErrorCode errorCode, String detail) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
+        problem.setTitle(status.getReasonPhrase());
+        problem.setProperty(ERROR_CODE, errorCode.code());
+        return problem;
+    }
+
+    private static ErrorCode defaultErrorCode(HttpStatusCode status) {
+        if (status.value() == HttpStatus.NOT_FOUND.value()) {
+            return CommonErrorCode.RESOURCE_NOT_FOUND;
+        }
+        if (status.is4xxClientError()) {
+            return CommonErrorCode.MALFORMED_REQUEST;
+        }
+        return CommonErrorCode.INTERNAL_ERROR;
+    }
+}
