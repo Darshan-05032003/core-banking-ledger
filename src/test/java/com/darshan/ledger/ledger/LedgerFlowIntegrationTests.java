@@ -6,7 +6,6 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -158,14 +157,14 @@ class LedgerFlowIntegrationTests {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errorCode").value("UNSUPPORTED_CURRENCY"));
 
-        mockMvc.perform(post("/api/v1/accounts/{id}/freeze", accountId).with(csrf())).andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/accounts/{id}/freeze", accountId)).andExpect(status().isOk());
         cash(accountId, "deposits", "10.00", "INR", null)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("ACCOUNT_NOT_ACTIVE"));
         cash(accountId, "withdrawals", "10.00", "INR", null)
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("ACCOUNT_NOT_ACTIVE"));
-        mockMvc.perform(post("/api/v1/accounts/{id}/unfreeze", accountId).with(csrf())).andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/accounts/{id}/unfreeze", accountId)).andExpect(status().isOk());
         cash(accountId, "deposits", "10.00", "INR", null).andExpect(status().isCreated());
 
         cash(999_999L, "deposits", "10.00", "INR", null).andExpect(status().isNotFound());
@@ -178,13 +177,13 @@ class LedgerFlowIntegrationTests {
         long accountId = testAccounts.openActiveAccount();
         cash(accountId, "deposits", "75.00", "INR", null).andExpect(status().isCreated());
 
-        mockMvc.perform(post("/api/v1/accounts/{id}/close", accountId).with(csrf()))
+        mockMvc.perform(post("/api/v1/accounts/{id}/close", accountId))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errorCode").value("BALANCE_NOT_ZERO"))
                 .andExpect(jsonPath("$.detail").value(containsString("75.00 INR")));
 
         cash(accountId, "withdrawals", "75.00", "INR", null).andExpect(status().isCreated());
-        mockMvc.perform(post("/api/v1/accounts/{id}/close", accountId).with(csrf()))
+        mockMvc.perform(post("/api/v1/accounts/{id}/close", accountId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CLOSED"));
 
@@ -197,13 +196,13 @@ class LedgerFlowIntegrationTests {
     private ResultActions cash(long accountId, String operation, String amount, String currency, String remarks)
             throws Exception {
         String remarksField = remarks == null ? "" : ",\"remarks\":\"" + remarks + "\"";
-        return mockMvc.perform(post("/api/v1/accounts/{id}/{op}", accountId, operation).with(csrf())
+        return mockMvc.perform(post("/api/v1/accounts/{id}/{op}", accountId, operation)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"amount\":" + amount + ",\"currency\":\"" + currency + "\"" + remarksField + "}"));
     }
 
     private ResultActions reverse(long journalId, String reason) throws Exception {
-        return mockMvc.perform(post("/api/v1/journals/{id}/reversal", journalId).with(csrf())
+        return mockMvc.perform(post("/api/v1/journals/{id}/reversal", journalId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"reason\":\"" + reason + "\"}"));
     }

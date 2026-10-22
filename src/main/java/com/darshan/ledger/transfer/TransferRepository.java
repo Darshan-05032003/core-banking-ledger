@@ -17,4 +17,6 @@ public interface TransferRepository extends JpaRepository<Transfer, Long> {
               and t.createdAt >= :from and t.createdAt < :to
             """)
     Optional<BigDecimal> sumOutgoingBetween(Long accountId, Instant from, Instant to);
+
+    boolean existsByIdAndFromAccountCustomerId(Long id, Long customerId);
 }

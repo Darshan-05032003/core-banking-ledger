@@ -3,6 +3,7 @@ package com.darshan.ledger.ledger;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,12 +20,14 @@ public class TellerController {
     }
 
     @PostMapping("/api/v1/accounts/{accountId}/deposits")
+    @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
     public ResponseEntity<CashOperationResponse> deposit(@PathVariable Long accountId,
             @Valid @RequestBody CashRequest request) {
         return created(tellerService.deposit(accountId, request));
     }
 
     @PostMapping("/api/v1/accounts/{accountId}/withdrawals")
+    @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
     public ResponseEntity<CashOperationResponse> withdraw(@PathVariable Long accountId,
             @Valid @RequestBody CashRequest request) {
         return created(tellerService.withdraw(accountId, request));

@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,6 +22,7 @@ public class AccountController {
     }
 
     @PostMapping("/api/v1/accounts")
+    @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
     public ResponseEntity<AccountResponse> open(@Valid @RequestBody OpenAccountRequest request) {
         AccountResponse account = accountService.open(request);
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
@@ -31,31 +33,40 @@ public class AccountController {
     }
 
     @GetMapping("/api/v1/accounts/{accountId}")
+    @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN') "
+            + "or (hasRole('CUSTOMER') and @accountAccess.isOwner(#accountId, authentication))")
     public AccountResponse get(@PathVariable Long accountId) {
         return accountService.get(accountId);
     }
 
     @GetMapping("/api/v1/accounts/{accountId}/balance")
+    @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN') "
+            + "or (hasRole('CUSTOMER') and @accountAccess.isOwner(#accountId, authentication))")
     public AccountBalanceResponse balance(@PathVariable Long accountId) {
         return accountService.balance(accountId);
     }
 
     @GetMapping("/api/v1/customers/{customerId}/accounts")
+    @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN') "
+            + "or (hasRole('CUSTOMER') and @customerAccess.isSelf(#customerId, authentication))")
     public List<AccountResponse> listForCustomer(@PathVariable Long customerId) {
         return accountService.listForCustomer(customerId);
     }
 
     @PostMapping("/api/v1/accounts/{accountId}/freeze")
+    @PreAuthorize("hasRole('ADMIN')")
     public AccountResponse freeze(@PathVariable Long accountId) {
         return accountService.freeze(accountId);
     }
 
     @PostMapping("/api/v1/accounts/{accountId}/unfreeze")
+    @PreAuthorize("hasRole('ADMIN')")
     public AccountResponse unfreeze(@PathVariable Long accountId) {
         return accountService.unfreeze(accountId);
     }
 
     @PostMapping("/api/v1/accounts/{accountId}/close")
+    @PreAuthorize("hasRole('ADMIN')")
     public AccountResponse close(@PathVariable Long accountId) {
         return accountService.close(accountId);
     }

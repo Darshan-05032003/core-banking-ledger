@@ -30,7 +30,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(AccountController.class)
-@WithMockUser
+@WithMockUser(roles = "ADMIN")
 class AccountControllerTests {
 
     @Autowired

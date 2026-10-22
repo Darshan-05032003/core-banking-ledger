@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,6 +27,8 @@ public class TransferController {
     }
 
     @PostMapping("/api/v1/transfers")
+    @PreAuthorize("hasRole('ADMIN') "
+            + "or (hasRole('CUSTOMER') and @accountAccess.ownsAccountNumber(#request.fromAccount(), authentication))")
     public ResponseEntity<Object> transfer(
             @RequestHeader(name = IdempotencyService.HEADER, required = false) String idempotencyKey,
             @Valid @RequestBody TransferRequest request) {
@@ -37,6 +40,8 @@ public class TransferController {
     }
 
     @GetMapping("/api/v1/transfers/{transferId}")
+    @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN') "
+            + "or (hasRole('CUSTOMER') and @transferAccess.isSender(#transferId, authentication))")
     public TransferResponse get(@PathVariable Long transferId) {
         return transferService.get(transferId);
     }
