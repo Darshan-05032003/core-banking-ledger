@@ -70,16 +70,31 @@ class LedgerSchemaTests {
 
     @Test
     void aLegMustPointAtExactlyOneAccount() {
-        String insert = "insert into ledger_entry (journal_entry_id, account_id, gl_account_id, direction, amount, currency)"
-                + " values (?, ?, ?, 'DEBIT', 1.00, 'INR')";
+        String insert = "insert into ledger_entry"
+                + " (journal_entry_id, account_id, gl_account_id, direction, amount, currency, posted_at)"
+                + " values (?, ?, ?, 'DEBIT', 1.00, 'INR', (select posted_at from journal_entry where id = ?))";
         Long vaultId = jdbc.queryForObject("select id from gl_account where code = 'CASH_VAULT'", Long.class);
 
-        assertThatThrownBy(() -> jdbc.update(insert, journalId, null, null))
+        assertThatThrownBy(() -> jdbc.update(insert, journalId, null, null, journalId))
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("ck_ledger_entry_one_account");
-        assertThatThrownBy(() -> jdbc.update(insert, journalId, accountId, vaultId))
+        assertThatThrownBy(() -> jdbc.update(insert, journalId, accountId, vaultId, journalId))
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("ck_ledger_entry_one_account");
+    }
+
+    @Test
+    void aLegCannotCarryAPostingTimeOtherThanItsJournals() {
+        String insert = "insert into ledger_entry"
+                + " (journal_entry_id, account_id, direction, amount, currency, posted_at)"
+                + " values (?, ?, 'CREDIT', 1.00, 'INR', (select posted_at + interval '1 second' from journal_entry"
+                + " where id = ?))";
+
+        assertThatThrownBy(() -> jdbc.update(insert, journalId, accountId, journalId))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("fk_ledger_entry_journal_posted_at");
+        assertThat(jdbc.queryForObject("select count(*) from ledger_entry le join journal_entry je"
+                + " on je.id = le.journal_entry_id where le.posted_at <> je.posted_at", Long.class)).isZero();
     }
 
     @Test
