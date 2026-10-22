@@ -26,14 +26,12 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
-    static final String ERROR_CODE = "errorCode";
-    static final String CORRELATION_ID = "correlationId";
     static final String ERRORS = "errors";
 
     @ExceptionHandler(LedgerException.class)
     ResponseEntity<Object> handleLedgerException(LedgerException ex, WebRequest request) {
         log.info("Request rejected: {} {}", ex.getErrorCode().code(), ex.getMessage());
-        return respond(problem(ex.getStatus(), ex.getErrorCode(), ex.getMessage()), request);
+        return respond(ProblemDetails.of(ex), request);
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)
@@ -94,9 +92,9 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     protected ResponseEntity<Object> createResponseEntity(Object body, HttpHeaders headers,
             HttpStatusCode statusCode, WebRequest request) {
         if (body instanceof ProblemDetail problem) {
-            problem.setProperty(CORRELATION_ID, MDC.get(CorrelationIdFilter.MDC_KEY));
-            if (problem.getProperties() == null || !problem.getProperties().containsKey(ERROR_CODE)) {
-                problem.setProperty(ERROR_CODE, defaultErrorCode(statusCode).code());
+            problem.setProperty(ProblemDetails.CORRELATION_ID, MDC.get(CorrelationIdFilter.MDC_KEY));
+            if (problem.getProperties() == null || !problem.getProperties().containsKey(ProblemDetails.ERROR_CODE)) {
+                problem.setProperty(ProblemDetails.ERROR_CODE, defaultErrorCode(statusCode).code());
             }
         }
         return super.createResponseEntity(body, headers, statusCode, request);
@@ -107,10 +105,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     private static ProblemDetail problem(HttpStatus status, ErrorCode errorCode, String detail) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
-        problem.setTitle(status.getReasonPhrase());
-        problem.setProperty(ERROR_CODE, errorCode.code());
-        return problem;
+        return ProblemDetails.of(status, errorCode, detail);
     }
 
     private static String constraintName(DataIntegrityViolationException ex) {

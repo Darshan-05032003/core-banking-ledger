@@ -1,5 +1,6 @@
 package com.darshan.ledger.common.error;
 
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 
 public abstract class LedgerException extends RuntimeException {
@@ -19,5 +20,11 @@ public abstract class LedgerException extends RuntimeException {
 
     public ErrorCode getErrorCode() {
         return errorCode;
+    }
+
+    // Extra machine-readable members for the problem body (RFC 9457 extension members), for
+    // example the reference of the transfer attempt a rejection created.
+    public Map<String, Object> extensions() {
+        return Map.of();
     }
 }
