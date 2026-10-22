@@ -1,0 +1,86 @@
+package com.darshan.ledger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.darshan.ledger.approval.ApprovalProperties;
+import com.darshan.ledger.interest.InterestProperties;
+import com.darshan.ledger.security.SecurityProperties;
+import com.darshan.ledger.transfer.TransferLimitsProperties;
+import java.math.BigDecimal;
+import java.time.Duration;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.context.properties.bind.validation.BindValidationException;
+import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+
+class ApplicationPropertiesTests {
+
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withInitializer(new ConfigDataApplicationContextInitializer())
+            .withUserConfiguration(PropertiesConfiguration.class);
+
+    @Test
+    void bindsLocalDefaultsFromApplicationYaml() {
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+
+            TransferLimitsProperties limits = context.getBean(TransferLimitsProperties.class);
+            assertThat(limits.perTransaction()).isEqualByComparingTo(new BigDecimal("500000.00"));
+            assertThat(limits.daily()).isEqualByComparingTo(new BigDecimal("2000000.00"));
+
+            ApprovalProperties approval = context.getBean(ApprovalProperties.class);
+            assertThat(approval.threshold()).isEqualByComparingTo(new BigDecimal("200000.00"));
+            assertThat(approval.pendingExpiry()).isEqualTo(Duration.ofHours(24));
+
+            InterestProperties interest = context.getBean(InterestProperties.class);
+            assertThat(interest.savingsAnnualRate()).isEqualByComparingTo(new BigDecimal("0.0350"));
+            assertThat(interest.accrualCron()).isEqualTo("0 30 0 * * *");
+
+            SecurityProperties security = context.getBean(SecurityProperties.class);
+            assertThat(security.jwt().issuer()).isEqualTo("core-banking-ledger");
+            assertThat(security.jwt().accessTokenTtl()).isEqualTo(Duration.ofMinutes(15));
+            assertThat(security.rateLimit().transfersPerMinute()).isEqualTo(20);
+        });
+    }
+
+    @Test
+    void environmentOverridesAreBound() {
+        runner.withPropertyValues("app.limits.per-transaction=1000.00", "app.limits.daily=5000.00")
+                .run(context -> {
+                    TransferLimitsProperties limits = context.getBean(TransferLimitsProperties.class);
+                    assertThat(limits.perTransaction()).isEqualByComparingTo("1000.00");
+                    assertThat(limits.daily()).isEqualByComparingTo("5000.00");
+                });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "app.limits.per-transaction=-1",
+            "app.limits.per-transaction=0.00",
+            "app.limits.daily=1.00",
+            "app.approval.threshold=0",
+            "app.approval.pending-expiry=0s",
+            "app.interest.savings-annual-rate=1.5",
+            "app.interest.accrual-cron=every day at noon",
+            "app.security.jwt.issuer=",
+            "app.security.rate-limit.transfers-per-minute=0"
+    })
+    void invalidValuesFailStartup(String property) {
+        runner.withPropertyValues(property).run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure()).hasRootCauseInstanceOf(BindValidationException.class);
+        });
+    }
+
+    @EnableConfigurationProperties({
+            TransferLimitsProperties.class,
+            ApprovalProperties.class,
+            InterestProperties.class,
+            SecurityProperties.class
+    })
+    static class PropertiesConfiguration {
+    }
+}
