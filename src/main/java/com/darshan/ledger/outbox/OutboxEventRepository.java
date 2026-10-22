@@ -1,6 +1,7 @@
 package com.darshan.ledger.outbox;
 
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -42,7 +43,7 @@ public class OutboxEventRepository {
                 .param("eventVersion", eventVersion)
                 .param("partitionKey", partitionKey)
                 .param("payload", payload)
-                .param("createdAt", createdAt.atOffset(java.time.ZoneOffset.UTC))
+                .param("createdAt", createdAt.atOffset(ZoneOffset.UTC))
                 .update();
     }
 
@@ -60,7 +61,7 @@ public class OutboxEventRepository {
 
     public void markPublished(UUID id, Instant publishedAt) {
         jdbc.sql("UPDATE outbox_event SET published_at = :publishedAt WHERE id = :id")
-                .param("publishedAt", publishedAt.atOffset(java.time.ZoneOffset.UTC))
+                .param("publishedAt", publishedAt.atOffset(ZoneOffset.UTC))
                 .param("id", id)
                 .update();
     }

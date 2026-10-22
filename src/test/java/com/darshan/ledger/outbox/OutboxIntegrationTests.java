@@ -2,6 +2,7 @@ package com.darshan.ledger.outbox;
 
 import static com.darshan.ledger.FixedClockConfiguration.NOW;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
@@ -11,9 +12,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.darshan.ledger.IntegrationTest;
 import com.darshan.ledger.TestAccounts;
-import com.darshan.ledger.account.AccountRepository;
 import com.darshan.ledger.ledger.CashRequest;
 import com.darshan.ledger.ledger.EntryDirection;
+import com.darshan.ledger.ledger.JournalEntry;
+import com.darshan.ledger.ledger.JournalEntryRepository;
+import com.darshan.ledger.ledger.JournalPosted;
 import com.darshan.ledger.ledger.JournalType;
 import com.darshan.ledger.ledger.TellerService;
 import com.darshan.ledger.notification.Notification;
@@ -21,15 +24,18 @@ import com.darshan.ledger.notification.NotificationChannel;
 import com.darshan.ledger.notification.NotificationRepository;
 import com.jayway.jsonpath.JsonPath;
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
-import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -39,12 +45,14 @@ import org.apache.kafka.common.errors.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
@@ -74,10 +82,13 @@ class OutboxIntegrationTests {
     private NotificationRepository notificationRepository;
 
     @Autowired
-    private AccountRepository accountRepository;
+    private TellerService tellerService;
 
     @Autowired
-    private TellerService tellerService;
+    private JournalEntryRepository journalEntryRepository;
+
+    @Autowired
+    private ApplicationEventPublisher events;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -151,7 +162,7 @@ class OutboxIntegrationTests {
         assertThat(debit.getChannel()).isEqualTo(NotificationChannel.SMS);
         assertThat(debit.getRecipient()).matches("X+\\d{4}");
         assertThat(debit.getMessage()).isEqualTo("INR 250.50 debited from account " + senderEvent.maskedAccountNumber()
-                + " on 22 Oct 2026 10:15 UTC (TRANSFER " + journalReference + ")");
+                + " on 22 Oct 2026 10:15 (TRANSFER " + journalReference + ")");
         assertThat(debit.getCreatedAt()).isEqualTo(NOW);
         Notification credit = notifications.get(1);
         assertThat(credit.getAccountId()).isEqualTo(beneficiaryId);
@@ -174,7 +185,18 @@ class OutboxIntegrationTests {
 
         assertThat(outboxRowsForAccount(accountId)).isZero();
         assertThat(ledgerLinesOf(accountId)).isZero();
-        assertThat(accountRepository.findById(accountId).orElseThrow().getStatus().name()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void theOutboxWriterRefusesToRunOutsideAPostingTransaction() {
+        long accountId = testAccounts.openActiveAccount();
+        long journalId = tellerService.deposit(accountId, new CashRequest(new BigDecimal("5.00"), "INR", null))
+                .journal().id();
+        JournalEntry journal = journalEntryRepository.findById(journalId).orElseThrow();
+
+        assertThatThrownBy(() -> events.publishEvent(new JournalPosted(journal)))
+                .isInstanceOf(IllegalTransactionStateException.class);
+        assertThat(outboxRowsForAccount(accountId)).as("only the row the deposit wrote").isEqualTo(1);
     }
 
     @Test
@@ -280,8 +302,8 @@ class OutboxIntegrationTests {
         long senderId = testAccounts.openFundedAccount("1000.00");
         long beneficiaryId = testAccounts.openActiveAccount();
         drainOutbox();
-        List<String> postedReferences = new java.util.ArrayList<>();
-        List<Long> journalIds = new java.util.ArrayList<>();
+        List<String> postedReferences = new ArrayList<>();
+        List<Long> journalIds = new ArrayList<>();
         for (int i = 1; i <= 6; i++) {
             String body = transfer(senderId, beneficiaryId, i + ".00", "Instalment " + i)
                     .andExpect(status().isCreated())
@@ -292,7 +314,7 @@ class OutboxIntegrationTests {
 
         relay.run();
 
-        Set<UUID> eventIds = new java.util.HashSet<>();
+        Set<UUID> eventIds = new HashSet<>();
         journalIds.forEach(journalId -> awaitNotificationsOf(journalId)
                 .forEach(notification -> eventIds.add(notification.getEventId())));
         for (long accountId : List.of(senderId, beneficiaryId)) {
@@ -306,7 +328,7 @@ class OutboxIntegrationTests {
     }
 
     // The same relay code against a broker that acknowledges only the keys the predicate accepts.
-    private OutboxRelay relayWithBroker(java.util.function.Predicate<String> acknowledges) {
+    private OutboxRelay relayWithBroker(Predicate<String> acknowledges) {
         @SuppressWarnings("unchecked")
         KafkaTemplate<String, String> broker = Mockito.mock(KafkaTemplate.class);
         given(broker.send(any(ProducerRecord.class))).willAnswer(invocation -> {

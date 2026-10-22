@@ -63,7 +63,7 @@ public class NotificationService {
     }
 
     private String message(LedgerTransactionPostedV1 event, String verb) {
-        return "%s %s %s account %s on %s UTC (%s %s)".formatted(event.currency(), event.amount().toPlainString(),
+        return "%s %s %s account %s on %s (%s %s)".formatted(event.currency(), event.amount().toPlainString(),
                 verb, event.maskedAccountNumber(), WHEN.withZone(clock.getZone()).format(event.postedAt()),
                 event.journalType(), event.journalReference());
     }

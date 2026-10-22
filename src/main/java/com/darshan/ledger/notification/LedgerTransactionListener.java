@@ -1,5 +1,6 @@
 package com.darshan.ledger.notification;
 
+import com.darshan.ledger.common.web.CorrelationIdFilter;
 import com.darshan.ledger.outbox.LedgerTopics;
 import com.darshan.ledger.outbox.LedgerTransactionPostedV1;
 import java.nio.charset.StandardCharsets;
@@ -19,8 +20,6 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class LedgerTransactionListener {
 
-    private static final String CORRELATION_KEY = "correlationId";
-
     private final NotificationService notificationService;
     private final ObjectMapper objectMapper;
 
@@ -31,11 +30,11 @@ public class LedgerTransactionListener {
 
     @KafkaListener(topics = LedgerTopics.TRANSACTIONS, groupId = "${app.notification.group-id}")
     public void onMessage(ConsumerRecord<String, String> record) {
-        MDC.put(CORRELATION_KEY, eventIdHeader(record));
+        MDC.put(CorrelationIdFilter.MDC_KEY, eventIdHeader(record));
         try {
             notificationService.notify(parse(record.value()));
         } finally {
-            MDC.remove(CORRELATION_KEY);
+            MDC.remove(CorrelationIdFilter.MDC_KEY);
         }
     }
 
