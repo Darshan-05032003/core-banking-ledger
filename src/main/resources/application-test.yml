@@ -16,3 +16,5 @@ app:
       allow-generated-keys: true
     rate-limit:
       transfers-per-minute: 10000
+  notification:
+    retry-backoff: 100ms

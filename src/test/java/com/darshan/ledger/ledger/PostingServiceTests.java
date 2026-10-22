@@ -33,6 +33,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 class PostingServiceTests {
@@ -49,6 +50,8 @@ class PostingServiceTests {
     private EntityManager entityManager;
     @Mock
     private LockTimeout lockTimeout;
+    @Mock
+    private ApplicationEventPublisher events;
 
     private PostingService service;
     private GlAccount vault;
@@ -60,7 +63,7 @@ class PostingServiceTests {
     @BeforeEach
     void setUp() {
         service = new PostingService(journalEntryRepository, accountBalanceRepository, referenceGenerator, currentUser,
-                Clock.fixed(NOW, ZoneOffset.UTC), entityManager, lockTimeout);
+                Clock.fixed(NOW, ZoneOffset.UTC), entityManager, lockTimeout, events);
         vault = LedgerFixtures.cashVault();
         first = LedgerFixtures.account(2L, INR);
         second = LedgerFixtures.account(5L, INR);
@@ -79,6 +82,7 @@ class PostingServiceTests {
                 List.of(PostingLeg.debit(vault, amount), PostingLeg.credit(first, amount))));
 
         verify(journalEntryRepository).save(journal);
+        verify(events).publishEvent(new JournalPosted(journal));
         assertThat(journal.getReference()).isEqualTo("JRN-0000000001");
         assertThat(journal.getType()).isEqualTo(JournalType.DEPOSIT);
         assertThat(journal.getPostedAt()).isEqualTo(NOW);

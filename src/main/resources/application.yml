@@ -13,6 +13,18 @@ spring:
       ddl-auto: validate
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
 
 server:
   port: ${SERVER_PORT:8082}
@@ -46,6 +58,16 @@ app:
     expiry-cron: ${APP_APPROVAL_EXPIRY_CRON:0 * * * * *}
   statement:
     max-period: ${APP_STATEMENT_MAX_PERIOD:1y}
+  outbox:
+    relay-delay: ${APP_OUTBOX_RELAY_DELAY:PT1S}
+    batch-size: ${APP_OUTBOX_BATCH_SIZE:100}
+    publish-timeout: ${APP_OUTBOX_PUBLISH_TIMEOUT:15s}
+    topic-partitions: ${APP_OUTBOX_TOPIC_PARTITIONS:3}
+    topic-replication-factor: ${APP_OUTBOX_TOPIC_REPLICATION_FACTOR:1}
+  notification:
+    group-id: ${APP_NOTIFICATION_GROUP_ID:ledger-notifications}
+    retry-attempts: ${APP_NOTIFICATION_RETRY_ATTEMPTS:3}
+    retry-backoff: ${APP_NOTIFICATION_RETRY_BACKOFF:1s}
   interest:
     savings-annual-rate: ${APP_INTEREST_SAVINGS_ANNUAL_RATE:0.0350}
     accrual-cron: ${APP_INTEREST_ACCRUAL_CRON:0 30 0 * * *}

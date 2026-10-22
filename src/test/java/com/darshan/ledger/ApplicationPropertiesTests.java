@@ -6,6 +6,8 @@ import com.darshan.ledger.account.AccountProperties;
 import com.darshan.ledger.common.idempotency.IdempotencyProperties;
 import com.darshan.ledger.interest.InterestProperties;
 import com.darshan.ledger.ledger.LedgerProperties;
+import com.darshan.ledger.notification.NotificationProperties;
+import com.darshan.ledger.outbox.OutboxProperties;
 import com.darshan.ledger.security.SecurityProperties;
 import com.darshan.ledger.statement.StatementProperties;
 import com.darshan.ledger.transfer.ApprovalProperties;
@@ -60,6 +62,18 @@ class ApplicationPropertiesTests {
             assertThat(context.getBean(StatementProperties.class).maxPeriod()).isEqualTo(Period.ofYears(1));
             assertThat(context.getBean(IdempotencyProperties.class).inProgressTimeout())
                     .isEqualTo(Duration.ofMinutes(2));
+
+            OutboxProperties outbox = context.getBean(OutboxProperties.class);
+            assertThat(outbox.relayDelay()).isEqualTo(Duration.ofSeconds(1));
+            assertThat(outbox.batchSize()).isEqualTo(100);
+            assertThat(outbox.publishTimeout()).isEqualTo(Duration.ofSeconds(15));
+            assertThat(outbox.topicPartitions()).isEqualTo(3);
+            assertThat(outbox.topicReplicationFactor()).isEqualTo((short) 1);
+
+            NotificationProperties notification = context.getBean(NotificationProperties.class);
+            assertThat(notification.groupId()).isEqualTo("ledger-notifications");
+            assertThat(notification.retryAttempts()).isEqualTo(3);
+            assertThat(notification.retryBackoff()).isEqualTo(Duration.ofSeconds(1));
         });
     }
 
@@ -92,7 +106,15 @@ class ApplicationPropertiesTests {
             "app.ledger.lock-timeout=0s",
             "app.idempotency.in-progress-timeout=-1m",
             "app.statement.max-period=0d",
-            "app.statement.max-period=-6m"
+            "app.statement.max-period=-6m",
+            "app.outbox.relay-delay=PT0S",
+            "app.outbox.batch-size=0",
+            "app.outbox.batch-size=5000",
+            "app.outbox.publish-timeout=-1s",
+            "app.outbox.topic-partitions=0",
+            "app.notification.group-id=",
+            "app.notification.retry-attempts=0",
+            "app.notification.retry-backoff=-1s"
     })
     void invalidValuesFailStartup(String property) {
         runner.withPropertyValues(property).run(context -> {
@@ -109,7 +131,9 @@ class ApplicationPropertiesTests {
             SecurityProperties.class,
             LedgerProperties.class,
             IdempotencyProperties.class,
-            StatementProperties.class
+            StatementProperties.class,
+            OutboxProperties.class,
+            NotificationProperties.class
     })
     static class PropertiesConfiguration {
     }
