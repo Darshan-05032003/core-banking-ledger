@@ -51,6 +51,24 @@ class TransferControllerTests {
     private TransferRateLimiter rateLimiter;
 
     @Test
+    void aTransferWaitingForApprovalReturns202WithItsLocation() throws Exception {
+        given(transferService.transfer(eq("order-1"), any())).willReturn(new TransferOutcome.PendingApproval(
+                new TransferResponse(12L, "TRF-0000000012", TransferStatus.PENDING_APPROVAL, 23L, "XXXXXXXX0023",
+                        57L, "XXXXXXXX0057", new BigDecimal("250000.00"), "INR", "Rent", null, null, null, null,
+                        "user", Instant.parse("2026-10-22T10:15:30Z"), null, null, null)));
+
+        mockMvc.perform(post("/api/v1/transfers").with(csrf())
+                        .header("Idempotency-Key", "order-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY))
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("Location", endsWith("/api/v1/transfers/12")))
+                .andExpect(jsonPath("$.status").value("PENDING_APPROVAL"))
+                .andExpect(jsonPath("$.journalId").doesNotExist())
+                .andExpect(jsonPath("$.completedAt").doesNotExist());
+    }
+
+    @Test
     void aNewTransferReturns201WithItsLocationAndBody() throws Exception {
         TransferRequest request = new TransferRequest("000100000023", "000100000057", new BigDecimal("250.00"), "INR",
                 "Rent");

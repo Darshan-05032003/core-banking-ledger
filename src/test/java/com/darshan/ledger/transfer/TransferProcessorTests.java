@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -23,6 +24,8 @@ import com.darshan.ledger.common.idempotency.IdempotencyService;
 import com.darshan.ledger.common.money.Money;
 import com.darshan.ledger.ledger.AccountBalance;
 import com.darshan.ledger.ledger.EntryDirection;
+import com.darshan.ledger.ledger.Hold;
+import com.darshan.ledger.ledger.HoldService;
 import com.darshan.ledger.ledger.JournalEntry;
 import com.darshan.ledger.ledger.JournalType;
 import com.darshan.ledger.ledger.LedgerErrorCode;
@@ -31,6 +34,7 @@ import com.darshan.ledger.ledger.PostingService;
 import com.darshan.ledger.security.CurrentUser;
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +63,8 @@ class TransferProcessorTests {
     @Mock
     private IdempotencyService idempotencyService;
     @Mock
+    private HoldService holdService;
+    @Mock
     private CurrentUser currentUser;
 
     private TransferProcessor processor;
@@ -70,8 +76,9 @@ class TransferProcessorTests {
     @BeforeEach
     void setUp() {
         processor = new TransferProcessor(accountRepository, postingService, ruleChain, transferRepository,
-                referenceGenerator, new TransferMapperImpl(), idempotencyService, currentUser,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                referenceGenerator, new TransferMapperImpl(), idempotencyService, holdService,
+                new ApprovalProperties(new BigDecimal("200000.00"), Duration.ofHours(24), "0 * * * * *"),
+                currentUser, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -88,8 +95,10 @@ class TransferProcessorTests {
             return transfer;
         });
 
-        TransferResponse response = processor.process(7L, request("250.00", "Rent"));
+        TransferOutcome outcome = processor.process(7L, request("250.00", "Rent"));
 
+        assertThat(outcome).isInstanceOf(TransferOutcome.Created.class);
+        TransferResponse response = ((TransferOutcome.Created) outcome).response();
         ArgumentCaptor<TransferContext> context = ArgumentCaptor.forClass(TransferContext.class);
         verify(ruleChain).evaluate(context.capture());
         assertThat(context.getValue().sender()).isSameAs(sender);
@@ -120,6 +129,49 @@ class TransferProcessorTests {
         assertThat(response.completedAt()).isEqualTo(NOW);
         assertThat(response.failureCode()).isNull();
         verify(idempotencyService).complete(7L, 201, response);
+        verifyNoInteractions(holdService);
+    }
+
+    @Test
+    void aTransferAboveTheThresholdIsParkedWithAHoldInsteadOfBeingPosted() {
+        resolveBothAccounts();
+        given(ruleChain.evaluate(any())).willReturn(TransferRuleResult.allowed());
+        given(referenceGenerator.next()).willReturn("TRF-0000000006");
+        given(currentUser.name()).willReturn("alice");
+        given(transferRepository.save(any())).willAnswer(invocation -> {
+            Transfer transfer = invocation.getArgument(0);
+            ReflectionTestUtils.setField(transfer, "id", 13L);
+            return transfer;
+        });
+        given(holdService.place(any(), any(), anyLong(), any(), any(), any())).willReturn(mock(Hold.class));
+
+        TransferOutcome outcome = processor.process(7L, request("200000.01", "Car"));
+
+        assertThat(outcome).isInstanceOf(TransferOutcome.PendingApproval.class);
+        TransferResponse response = ((TransferOutcome.PendingApproval) outcome).response();
+        assertThat(response.id()).isEqualTo(13L);
+        assertThat(response.status()).isEqualTo(TransferStatus.PENDING_APPROVAL);
+        assertThat(response.journalId()).isNull();
+        assertThat(response.completedAt()).isNull();
+        assertThat(response.createdBy()).isEqualTo("alice");
+        verify(holdService).place(sender, senderBalance, 13L, Money.of("200000.01", INR), NOW,
+                NOW.plus(Duration.ofHours(24)));
+        verify(postingService, never()).post(any());
+        verify(idempotencyService).complete(7L, 202, response);
+    }
+
+    @Test
+    void aTransferOfExactlyTheThresholdIsPostedStraightAway() {
+        resolveBothAccounts();
+        given(ruleChain.evaluate(any())).willReturn(TransferRuleResult.allowed());
+        given(referenceGenerator.next()).willReturn("TRF-0000000007");
+        given(currentUser.name()).willReturn("alice");
+        JournalEntry journal = journal(42L, "JRN-0000000042");
+        given(postingService.post(any())).willReturn(journal);
+        given(transferRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
+
+        assertThat(processor.process(7L, request("200000.00", null))).isInstanceOf(TransferOutcome.Created.class);
+        verifyNoInteractions(holdService);
     }
 
     @Test
@@ -246,7 +298,7 @@ class TransferProcessorTests {
     }
 
     private static JournalEntry journal(long id, String reference) {
-        JournalEntry journal = org.mockito.Mockito.mock(JournalEntry.class);
+        JournalEntry journal = mock(JournalEntry.class);
         given(journal.getId()).willReturn(id);
         given(journal.getReference()).willReturn(reference);
         return journal;

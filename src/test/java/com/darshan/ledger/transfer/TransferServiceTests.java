@@ -54,14 +54,25 @@ class TransferServiceTests {
     void aNewKeyRunsTheTransferOnTheNormalisedRequest() {
         given(currentUser.name()).willReturn("alice");
         given(idempotencyService.claim("alice", "order-1", normalised)).willReturn(new IdempotencyClaim.Acquired(7L));
-        TransferResponse response = response();
-        given(processor.process(7L, normalised)).willReturn(response);
+        TransferOutcome created = new TransferOutcome.Created(response());
+        given(processor.process(7L, normalised)).willReturn(created);
 
         TransferOutcome outcome = service.transfer("order-1", raw);
 
-        assertThat(outcome).isEqualTo(new TransferOutcome.Created(response));
+        assertThat(outcome).isSameAs(created);
         verifyNoInteractions(failureRecorder);
         verify(idempotencyService, never()).release(anyLong());
+    }
+
+    @Test
+    void aParkedTransferComesBackAsPendingApproval() {
+        given(currentUser.name()).willReturn("alice");
+        given(idempotencyService.claim("alice", "order-1", normalised)).willReturn(new IdempotencyClaim.Acquired(7L));
+        TransferOutcome pending = new TransferOutcome.PendingApproval(response());
+        given(processor.process(7L, normalised)).willReturn(pending);
+
+        assertThat(service.transfer("order-1", raw)).isSameAs(pending);
+        verifyNoInteractions(failureRecorder);
     }
 
     @Test
