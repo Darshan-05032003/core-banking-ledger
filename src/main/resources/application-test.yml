@@ -9,3 +9,8 @@ logging:
 app:
   ledger:
     lock-timeout: 2s
+  security:
+    jwt:
+      allow-generated-keys: true
+    rate-limit:
+      transfers-per-minute: 10000

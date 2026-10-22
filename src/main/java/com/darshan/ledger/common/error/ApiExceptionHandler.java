@@ -31,7 +31,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(LedgerException.class)
     ResponseEntity<Object> handleLedgerException(LedgerException ex, WebRequest request) {
         log.info("Request rejected: {} {}", ex.getErrorCode().code(), ex.getMessage());
-        return respond(ProblemDetails.of(ex), request);
+        HttpHeaders headers = new HttpHeaders();
+        if (ex.getStatus() == HttpStatus.UNAUTHORIZED) {
+            headers.set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
+        }
+        return createResponseEntity(ProblemDetails.of(ex), headers, ex.getStatus(), request);
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

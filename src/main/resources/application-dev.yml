@@ -2,3 +2,11 @@ logging:
   level:
     com.darshan.ledger: DEBUG
     org.hibernate.SQL: DEBUG
+
+app:
+  security:
+    jwt:
+      allow-generated-keys: true
+    dev-admin:
+      username: ${APP_ADMIN_USERNAME:admin}
+      password: ${APP_ADMIN_PASSWORD:}
