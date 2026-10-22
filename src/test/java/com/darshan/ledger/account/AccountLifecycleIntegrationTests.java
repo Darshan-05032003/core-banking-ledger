@@ -11,48 +11,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.darshan.ledger.TestcontainersConfiguration;
+import static com.darshan.ledger.FixedClockConfiguration.NOW;
+import static com.darshan.ledger.FixedClockConfiguration.TODAY;
+
+import com.darshan.ledger.IntegrationTest;
 import com.darshan.ledger.customer.KycStatus;
 import com.jayway.jsonpath.JsonPath;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.test.context.support.WithMockUser;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
-@Import(TestcontainersConfiguration.class)
-@WithMockUser
+@IntegrationTest
 class AccountLifecycleIntegrationTests {
 
-    private static final Instant NOW = Instant.parse("2026-10-22T10:15:30Z");
-    private static final LocalDate TODAY = LocalDate.of(2026, 10, 22);
     private static final AtomicInteger EMAIL_SEQUENCE = new AtomicInteger();
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class FixedClockConfiguration {
-
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(NOW, ZoneOffset.UTC);
-        }
-    }
 
     @Autowired
     private MockMvc mockMvc;

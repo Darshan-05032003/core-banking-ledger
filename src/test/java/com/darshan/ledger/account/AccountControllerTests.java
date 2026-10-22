@@ -18,6 +18,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.darshan.ledger.common.error.BusinessRuleException;
 import com.darshan.ledger.common.error.ConflictException;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -102,6 +103,20 @@ class AccountControllerTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
                 .andExpect(jsonPath("$[0].maskedAccountNumber").value("XXXXXXXX0014"));
+    }
+
+    @Test
+    void returnsTheBalanceWithTwoDecimalAmounts() throws Exception {
+        given(accountService.balance(10L)).willReturn(new AccountBalanceResponse(
+                10L, "XXXXXXXX0014", new BigDecimal("1250.00"), new BigDecimal("1000.50"), "INR"));
+
+        mockMvc.perform(get("/api/v1/accounts/10/balance"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountId").value(10))
+                .andExpect(jsonPath("$.maskedAccountNumber").value("XXXXXXXX0014"))
+                .andExpect(jsonPath("$.currency").value("INR"))
+                .andExpect(content().string(containsString("\"ledgerBalance\":1250.00")))
+                .andExpect(content().string(containsString("\"availableBalance\":1000.50")));
     }
 
     @Test

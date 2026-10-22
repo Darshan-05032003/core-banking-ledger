@@ -73,16 +73,12 @@ public class Account {
     }
 
     public void freeze() {
-        requireOpen();
-        if (status != AccountStatus.ACTIVE) {
-            throw new ConflictException(AccountErrorCode.ACCOUNT_NOT_ACTIVE,
-                    "Account " + accountNumber + " is " + status + " and cannot be frozen");
-        }
+        requireActive("frozen");
         status = AccountStatus.FROZEN;
     }
 
     public void unfreeze() {
-        requireOpen();
+        requireNotClosed();
         if (status != AccountStatus.FROZEN) {
             throw new ConflictException(AccountErrorCode.ACCOUNT_NOT_FROZEN,
                     "Account " + accountNumber + " is " + status + " and cannot be unfrozen");
@@ -92,7 +88,7 @@ public class Account {
 
     // The balance and hold checks live in AccountService; the entity only guards its own state.
     public void close(LocalDate closedOn) {
-        requireOpen();
+        requireNotClosed();
         status = AccountStatus.CLOSED;
         this.closedOn = Objects.requireNonNull(closedOn);
     }
@@ -101,7 +97,16 @@ public class Account {
         return status == AccountStatus.ACTIVE;
     }
 
-    private void requireOpen() {
+    // The verb completes the message: "is FROZEN and cannot be credited".
+    public void requireActive(String verb) {
+        requireNotClosed();
+        if (status != AccountStatus.ACTIVE) {
+            throw new ConflictException(AccountErrorCode.ACCOUNT_NOT_ACTIVE,
+                    "Account " + accountNumber + " is " + status + " and cannot be " + verb);
+        }
+    }
+
+    public void requireNotClosed() {
         if (status == AccountStatus.CLOSED) {
             throw new ConflictException(AccountErrorCode.ACCOUNT_CLOSED,
                     "Account " + accountNumber + " is closed");

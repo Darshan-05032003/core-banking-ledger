@@ -49,6 +49,7 @@ public class AccountService {
         AccountNumber accountNumber = accountNumberGenerator.next();
         Account account = accountRepository.save(new Account(
                 accountNumber, customer, request.type(), currency, LocalDate.now(clock), clock.instant()));
+        accountBalances.initialize(account);
         log.info("Account {} ({}) opened for customer {}", accountNumber, account.getType(), customer.getId());
         return accountMapper.toResponse(account);
     }
@@ -56,6 +57,12 @@ public class AccountService {
     @Transactional(readOnly = true)
     public AccountResponse get(Long accountId) {
         return accountMapper.toResponse(requireAccount(accountId));
+    }
+
+    @Transactional(readOnly = true)
+    public AccountBalanceResponse balance(Long accountId) {
+        Account account = requireAccount(accountId);
+        return accountMapper.toBalanceResponse(account, accountBalances.snapshot(account));
     }
 
     @Transactional(readOnly = true)
@@ -93,7 +100,8 @@ public class AccountService {
         return accountMapper.toResponse(account);
     }
 
-    private Account requireAccount(Long accountId) {
+    @Transactional(readOnly = true)
+    public Account requireAccount(Long accountId) {
         return accountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
     }
