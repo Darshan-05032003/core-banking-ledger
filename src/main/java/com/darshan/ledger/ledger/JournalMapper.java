@@ -16,7 +16,8 @@ public interface JournalMapper {
     @Mapping(target = "currency", source = "amount.currency")
     LedgerEntryResponse toEntryResponse(LedgerEntry entry);
 
+    // GL legs have no customer account, so the number arrives as null.
     default String mask(AccountNumber accountNumber) {
-        return accountNumber.masked();
+        return accountNumber == null ? null : accountNumber.masked();
     }
 }
