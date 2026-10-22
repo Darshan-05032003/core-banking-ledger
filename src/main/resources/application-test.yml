@@ -5,3 +5,7 @@ spring:
 logging:
   level:
     com.darshan.ledger: DEBUG
+
+app:
+  ledger:
+    lock-timeout: 2s
