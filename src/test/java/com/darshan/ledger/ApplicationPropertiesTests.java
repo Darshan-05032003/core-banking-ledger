@@ -49,6 +49,8 @@ class ApplicationPropertiesTests {
             SecurityProperties security = context.getBean(SecurityProperties.class);
             assertThat(security.jwt().issuer()).isEqualTo("core-banking-ledger");
             assertThat(security.jwt().accessTokenTtl()).isEqualTo(Duration.ofMinutes(15));
+            assertThat(security.jwt().allowGeneratedKeys()).as("dev profile generates keys").isTrue();
+            assertThat(security.jwt().hasConfiguredKeys()).isFalse();
             assertThat(security.rateLimit().transfersPerMinute()).isEqualTo(20);
 
             assertThat(context.getBean(LedgerProperties.class).lockTimeout()).isEqualTo(Duration.ofSeconds(3));
@@ -79,6 +81,8 @@ class ApplicationPropertiesTests {
             "app.interest.savings-annual-rate=1.5",
             "app.interest.accrual-cron=every day at noon",
             "app.security.jwt.issuer=",
+            "app.security.jwt.access-token-ttl=0s",
+            "app.security.jwt.private-key=-----BEGIN PRIVATE KEY-----",
             "app.security.rate-limit.transfers-per-minute=0",
             "app.ledger.lock-timeout=0s",
             "app.idempotency.in-progress-timeout=-1m"
