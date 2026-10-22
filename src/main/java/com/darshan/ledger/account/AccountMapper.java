@@ -17,6 +17,7 @@ public interface AccountMapper {
     @Mapping(target = "maskedAccountNumber", source = "account.accountNumber")
     @Mapping(target = "ledgerBalance", source = "snapshot.ledgerBalance.amount")
     @Mapping(target = "availableBalance", source = "snapshot.availableBalance.amount")
+    @Mapping(target = "onHold", expression = "java(snapshot.heldAmount().amount())")
     @Mapping(target = "currency", source = "account.currency")
     AccountBalanceResponse toBalanceResponse(Account account, AccountBalanceSnapshot snapshot);
 

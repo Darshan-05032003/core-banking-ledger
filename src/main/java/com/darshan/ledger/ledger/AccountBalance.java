@@ -80,6 +80,27 @@ public class AccountBalance {
         availableBalance = availableBalance().minus(amount).amount();
     }
 
+    // A hold reserves money without posting anything: the ledger balance stays, the available
+    // balance drops, and the gap is exactly the sum of the account's active holds.
+    public void hold(Money amount) {
+        requireCurrency(amount);
+        if (availableBalance().isLessThan(amount)) {
+            throw new BusinessRuleException(LedgerErrorCode.INSUFFICIENT_FUNDS,
+                    "Available balance " + availableBalance() + " is lower than " + amount);
+        }
+        availableBalance = availableBalance().minus(amount).amount();
+    }
+
+    public void releaseHold(Money amount) {
+        requireCurrency(amount);
+        Money released = availableBalance().plus(amount);
+        if (released.isGreaterThan(ledgerBalance())) {
+            throw new IllegalStateException("Releasing " + amount + " would put the available balance " + released
+                    + " above the ledger balance " + ledgerBalance());
+        }
+        availableBalance = released.amount();
+    }
+
     private void requireCurrency(Money amount) {
         if (!amount.hasCurrency(currency)) {
             throw new CurrencyMismatchException(currency, amount.currency());

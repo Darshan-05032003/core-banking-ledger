@@ -75,8 +75,57 @@ class AccountBalanceTests {
     }
 
     @Test
+    void aHoldLowersOnlyTheAvailableBalanceAndBlocksClosure() {
+        balance.credit(Money.of("500.00", INR));
+        balance.hold(Money.of("300.00", INR));
+
+        assertThat(balance.ledgerBalance()).isEqualTo(Money.of("500.00", INR));
+        assertThat(balance.availableBalance()).isEqualTo(Money.of("200.00", INR));
+        assertThat(balance.snapshot().heldAmount()).isEqualTo(Money.of("300.00", INR));
+        assertThat(balance.snapshot().closureEligibility())
+                .isEqualTo(new ClosureEligibility.FundsOnHold(Money.of("300.00", INR)));
+    }
+
+    @Test
+    void aHoldBeyondTheAvailableBalanceIsRefused() {
+        balance.credit(Money.of("500.00", INR));
+        balance.hold(Money.of("300.00", INR));
+
+        assertThatThrownBy(() -> balance.hold(Money.of("200.01", INR)))
+                .isInstanceOf(BusinessRuleException.class)
+                .extracting(ex -> ((LedgerException) ex).getErrorCode())
+                .isEqualTo(LedgerErrorCode.INSUFFICIENT_FUNDS);
+        assertThatThrownBy(() -> balance.debit(Money.of("200.01", INR))).isInstanceOf(BusinessRuleException.class);
+        assertThat(balance.availableBalance()).isEqualTo(Money.of("200.00", INR));
+    }
+
+    @Test
+    void releasingAHoldRestoresTheAvailableBalance() {
+        balance.credit(Money.of("500.00", INR));
+        balance.hold(Money.of("300.00", INR));
+        balance.releaseHold(Money.of("300.00", INR));
+
+        assertThat(balance.availableBalance()).isEqualTo(Money.of("500.00", INR));
+        assertThat(balance.snapshot().heldAmount().isZero()).isTrue();
+    }
+
+    @Test
+    void releasingMoreThanIsHeldIsACorruptionAndIsRefused() {
+        balance.credit(Money.of("500.00", INR));
+        balance.hold(Money.of("300.00", INR));
+
+        assertThatThrownBy(() -> balance.releaseHold(Money.of("300.01", INR)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("above the ledger balance");
+        assertThat(balance.availableBalance()).isEqualTo(Money.of("200.00", INR));
+    }
+
+    @Test
     void refusesAmountsInAnotherCurrency() {
         assertThatThrownBy(() -> balance.credit(Money.of("1.00", USD))).isInstanceOf(CurrencyMismatchException.class);
         assertThatThrownBy(() -> balance.debit(Money.of("1.00", USD))).isInstanceOf(CurrencyMismatchException.class);
+        assertThatThrownBy(() -> balance.hold(Money.of("1.00", USD))).isInstanceOf(CurrencyMismatchException.class);
+        assertThatThrownBy(() -> balance.releaseHold(Money.of("1.00", USD)))
+                .isInstanceOf(CurrencyMismatchException.class);
     }
 }

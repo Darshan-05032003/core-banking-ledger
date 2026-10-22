@@ -35,7 +35,7 @@ public class TransferService {
         IdempotencyClaim claim = idempotencyService.claim(currentUser.name(), idempotencyKey, normalised);
         return switch (claim) {
             case IdempotencyClaim.Replayed replayed -> new TransferOutcome.Replayed(replayed.response());
-            case IdempotencyClaim.Acquired acquired -> new TransferOutcome.Created(execute(acquired.id(), normalised));
+            case IdempotencyClaim.Acquired acquired -> execute(acquired.id(), normalised);
         };
     }
 
@@ -48,7 +48,7 @@ public class TransferService {
 
     // A rejection is a business outcome: it is recorded and replayed like a success. Anything
     // else (a lock timeout, a lost connection) hands the key back so the client can retry.
-    private TransferResponse execute(long claimId, TransferRequest request) {
+    private TransferOutcome execute(long claimId, TransferRequest request) {
         try {
             return processor.process(claimId, request);
         } catch (TransferRejectedException ex) {

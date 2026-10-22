@@ -128,6 +128,6 @@ class TellerControllerTests {
                 new LedgerEntryResponse(null, null, GlAccountCode.CASH_VAULT, vaultSide, new BigDecimal("500.00"), "INR"),
                 new LedgerEntryResponse(10L, "XXXXXXXX0014", null, customerSide, new BigDecimal("500.00"), "INR")));
         return new CashOperationResponse(journal, new AccountBalanceResponse(10L, "XXXXXXXX0014",
-                new BigDecimal(balance), new BigDecimal(balance), "INR"));
+                new BigDecimal(balance), new BigDecimal(balance), BigDecimal.ZERO, "INR"));
     }
 }

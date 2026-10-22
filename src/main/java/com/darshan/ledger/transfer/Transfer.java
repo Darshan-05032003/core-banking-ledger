@@ -1,6 +1,7 @@
 package com.darshan.ledger.transfer;
 
 import com.darshan.ledger.account.Account;
+import com.darshan.ledger.common.error.ConflictException;
 import com.darshan.ledger.common.error.ErrorCode;
 import com.darshan.ledger.common.money.Money;
 import com.darshan.ledger.ledger.JournalEntry;
@@ -23,7 +24,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 // One transfer attempt. A rejected attempt is kept as FAILED with the rule that stopped it, so
-// every reference a customer quotes can be looked up, whether or not money moved.
+// every reference a customer quotes can be looked up, whether or not money moved. A high-value
+// transfer waits as PENDING_APPROVAL and ends COMPLETED, REJECTED or EXPIRED.
 @Entity
 @Table(name = "transfer")
 @Getter
@@ -74,6 +76,12 @@ public class Transfer {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    @Column(name = "decided_by", length = 100)
+    private String decidedBy;
+
+    @Column(name = "decision_reason")
+    private String decisionReason;
+
     private Transfer(String reference, Account fromAccount, Account toAccount, Money amount, String remarks,
             String createdBy, Instant createdAt) {
         this.reference = Objects.requireNonNull(reference);
@@ -102,6 +110,51 @@ public class Transfer {
         transfer.failureReason = failureReason;
         transfer.completedAt = now;
         return transfer;
+    }
+
+    public static Transfer pendingApproval(String reference, Account fromAccount, Account toAccount, Money amount,
+            String remarks, String createdBy, Instant now) {
+        Transfer transfer = new Transfer(reference, fromAccount, toAccount, amount, remarks, createdBy, now);
+        transfer.status = TransferStatus.PENDING_APPROVAL;
+        return transfer;
+    }
+
+    public void approve(JournalEntry journal, String checker, Instant now) {
+        requirePendingApproval();
+        this.journal = Objects.requireNonNull(journal);
+        decide(TransferStatus.COMPLETED, checker, null, now);
+    }
+
+    public void reject(String checker, String reason, Instant now) {
+        requirePendingApproval();
+        decide(TransferStatus.REJECTED, checker, Objects.requireNonNull(reason), now);
+    }
+
+    public void expire(String actor, Instant now) {
+        requirePendingApproval();
+        decide(TransferStatus.EXPIRED, actor, null, now);
+    }
+
+    public boolean isPendingApproval() {
+        return status == TransferStatus.PENDING_APPROVAL;
+    }
+
+    public boolean wasInitiatedBy(String username) {
+        return createdBy.equals(username);
+    }
+
+    private void decide(TransferStatus outcome, String actor, String reason, Instant now) {
+        this.status = outcome;
+        this.decidedBy = Objects.requireNonNull(actor);
+        this.decisionReason = reason;
+        this.completedAt = Objects.requireNonNull(now);
+    }
+
+    public void requirePendingApproval() {
+        if (!isPendingApproval()) {
+            throw new ConflictException(TransferErrorCode.TRANSFER_NOT_PENDING,
+                    "Transfer " + reference + " is " + status + ", only a pending transfer can be decided");
+        }
     }
 
     @Override

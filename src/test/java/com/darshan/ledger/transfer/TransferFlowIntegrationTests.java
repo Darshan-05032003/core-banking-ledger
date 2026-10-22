@@ -251,15 +251,20 @@ class TransferFlowIntegrationTests {
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errorCode").value("PER_TRANSACTION_LIMIT_EXCEEDED"));
 
+        // Above the approval threshold, so these wait for a checker; they still count against the
+        // daily limit, and their holds leave the ledger balance untouched.
         for (int i = 0; i < 4; i++) {
-            transfer(UUID.randomUUID().toString(), from, to, "500000.00", "INR", null).andExpect(status().isCreated());
+            transfer(UUID.randomUUID().toString(), from, to, "500000.00", "INR", null).andExpect(status().isAccepted());
         }
         transfer(UUID.randomUUID().toString(), from, to, "0.01", "INR", null)
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.errorCode").value("DAILY_LIMIT_EXCEEDED"))
                 .andExpect(jsonPath("$.detail").value(containsString("2000000.00 INR plus 0.01 INR")));
-        expectBalance(senderId, "1000000.00");
-        expectBalance(beneficiaryId, "2000000.00");
+        mockMvc.perform(get("/api/v1/accounts/{id}/balance", senderId))
+                .andExpect(content().string(containsString("\"ledgerBalance\":3000000.00")))
+                .andExpect(content().string(containsString("\"availableBalance\":1000000.00")))
+                .andExpect(content().string(containsString("\"onHold\":2000000.00")));
+        expectBalance(beneficiaryId, "0.00");
 
         customerService.rejectKyc(testAccounts.customerIdOf(senderId), new RejectKycRequest("Document expired"));
         transfer(UUID.randomUUID().toString(), from, to, "1.00", "INR", null)

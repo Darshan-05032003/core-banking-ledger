@@ -44,6 +44,9 @@ public class TransferController {
         return switch (transferService.transfer(idempotencyKey, request)) {
             case TransferOutcome.Created created -> ResponseEntity.created(location(created.response().id()))
                     .body(created.response());
+            case TransferOutcome.PendingApproval pending -> ResponseEntity.accepted()
+                    .location(location(pending.response().id()))
+                    .body(pending.response());
             case TransferOutcome.Replayed replayed -> replay(replayed.response());
         };
     }

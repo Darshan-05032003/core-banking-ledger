@@ -27,9 +27,10 @@ Application settings live under the `app.*` prefix and are bound to validated `@
 | `app.ledger` | Lock timeout applied to every transaction that locks balance rows |
 | `app.idempotency` | How long an unfinished `Idempotency-Key` may block before a retry takes it over |
 | `app.limits` | Per-transaction and daily transfer limits |
-| `app.approval` | Maker-checker threshold and expiry of pending transfers |
+| `app.approval` | Maker-checker threshold, how long a pending transfer waits before it expires, and the cron of the expiry sweep |
 | `app.interest` | Savings interest rate and accrual schedule |
 | `app.security` | JWT issuer, token lifetime, signing key pair and transfer rate limit |
+| `app.scheduling` | `enabled` switches the `@Scheduled` jobs off for an instance that should only serve requests (the test profile does this) |
 
 ## Authentication and roles
 
@@ -47,14 +48,14 @@ The signing key pair comes from `APP_SECURITY_JWT_PRIVATE_KEY` and `APP_SECURITY
 |---|---|
 | `CUSTOMER` | Read its own customer record, accounts and balances; send transfers from its own accounts and read them. A customer login is linked to exactly one customer id by an admin. |
 | `TELLER` | Onboard customers, decide KYC, open accounts, deposit and withdraw cash, read accounts, journals and transfers |
-| `CHECKER` | Read customers, accounts, journals and transfers; approves high-value transfers once maker-checker exists |
-| `ADMIN` | Everything above, plus freeze, unfreeze and close accounts, reverse journals, manage users and read all actuator endpoints |
+| `CHECKER` | Read customers, accounts, journals and transfers; list, approve and reject transfers waiting for approval |
+| `ADMIN` | Everything above, plus freeze, unfreeze and close accounts, reverse journals, manage users and read all actuator endpoints. An admin may decide approvals, but never one of its own transfers |
 
 Role rules live on each controller method with `@PreAuthorize`. Ownership is decided by small beans referenced from the expression, for example `@accountAccess.isOwner(#accountId, authentication)`, which run one existence query against the customer id in the token; an account that is not the caller's is reported as 403 whether or not it exists.
 
 ## Audit trail
 
-Every money movement (deposit, withdrawal, reversal, transfer) and every administrative action (KYC decision, freeze, unfreeze, close, user management) writes a row to `audit_log`: actor, roles, action, target type and id, outcome `SUCCESS` or `FAILURE`, the error code of a failure, client IP, correlation id, timestamp and a JSON `details` column with the business values of the request (amounts, masked account numbers, reasons; never passwords or full account numbers). The controller methods are marked `@Audited`, and an aspect writes the row after the method has returned or thrown, in its own transaction, so a withdrawal refused for insufficient funds or a freeze attempted by a teller without the right role is on record just like a successful one. Database triggers make `audit_log` append-only, as for the ledger tables.
+Every money movement (deposit, withdrawal, reversal, transfer), every approval decision and every administrative action (KYC decision, freeze, unfreeze, close, user management) writes a row to `audit_log`: actor, roles, action, target type and id, outcome `SUCCESS` or `FAILURE`, the error code of a failure, client IP, correlation id, timestamp and a JSON `details` column with the business values of the request (amounts, masked account numbers, reasons; never passwords or full account numbers). The controller methods are marked `@Audited`, and an aspect writes the row after the method has returned or thrown, in its own transaction, so a withdrawal refused for insufficient funds or a freeze attempted by a teller without the right role is on record just like a successful one. A pending transfer that expires is recorded the same way by the job that expires it, with `system` as the actor and no client IP. Database triggers make `audit_log` append-only, as for the ledger tables.
 
 ## Rate limiting
 
@@ -76,13 +77,16 @@ All endpoints are under `/api/v1`. The last column lists who may call the endpoi
 | `GET /accounts/{id}` | Fetch an account | staff, owner |
 | `POST /accounts/{id}/freeze`, `/unfreeze` | Block or unblock an account | ADMIN |
 | `POST /accounts/{id}/close` | Close an account; allowed only when the balance is exactly zero and nothing is on hold | ADMIN |
-| `GET /accounts/{id}/balance` | Ledger and available balance of an account | staff, owner |
+| `GET /accounts/{id}/balance` | Ledger balance, available balance and the amount on hold | staff, owner |
 | `POST /accounts/{id}/deposits` | Teller cash deposit (`amount`, `currency`, optional `remarks`) into an `ACTIVE` account | TELLER, ADMIN |
 | `POST /accounts/{id}/withdrawals` | Teller cash withdrawal; refused with `INSUFFICIENT_FUNDS` when the available balance is too low | TELLER, ADMIN |
 | `GET /journals/{id}` | A posted journal with its ledger lines | staff |
 | `POST /journals/{id}/reversal` | Correct a journal by posting the opposite legs (`reason` required); each journal can be reversed once | ADMIN |
-| `POST /transfers` | Move money between two customer accounts (`fromAccount`, `toAccount`, `amount`, `currency`, optional `remarks`); requires an `Idempotency-Key` header | owner of `fromAccount`, ADMIN |
-| `GET /transfers/{id}` | A transfer attempt, completed or failed | staff, owner of the sending account |
+| `POST /transfers` | Move money between two customer accounts (`fromAccount`, `toAccount`, `amount`, `currency`, optional `remarks`); requires an `Idempotency-Key` header. 201 when posted, 202 when parked for approval | owner of `fromAccount`, ADMIN |
+| `GET /transfers/{id}` | A transfer attempt in any state: completed, failed, pending approval, rejected or expired | staff, owner of the sending account |
+| `GET /approvals?status=&page=&size=` | The approval queue, oldest first (`status` defaults to `PENDING_APPROVAL`, `size` at most 100) | CHECKER, ADMIN |
+| `POST /approvals/{transferId}/approve` | Post a pending transfer | CHECKER, ADMIN |
+| `POST /approvals/{transferId}/reject` | Refuse a pending transfer (`reason` required) and release its hold | CHECKER, ADMIN |
 | `POST /admin/users` | Create a login (`username`, `password`, `roles`, optional `customerId` for a `CUSTOMER`) | ADMIN |
 | `GET /admin/users/{id}` | Fetch a login; the password hash is never returned | ADMIN |
 | `PUT /admin/users/{id}/customer` | Link a `CUSTOMER` login to a customer id | ADMIN |
@@ -92,7 +96,7 @@ All endpoints are under `/api/v1`. The last column lists who may call the endpoi
 
 Account numbers have twelve digits: a four-digit branch code (`app.account.branch-code`), a seven-digit sequence drawn from a database sequence and a Luhn check digit, so a mistyped digit is detected before any lookup. Responses and logs never contain full account numbers, phone numbers or email addresses; they are masked as `XXXXXXXX4821` and `a***@example.com`.
 
-Business rule violations use 422 with a machine-readable code, for example `CUSTOMER_NOT_VERIFIED`, `BALANCE_NOT_ZERO`, `INSUFFICIENT_FUNDS`, `DAILY_LIMIT_EXCEEDED` or `CURRENCY_MISMATCH`; invalid state changes such as freezing an already frozen account or reversing a journal twice use 409 (`ACCOUNT_NOT_ACTIVE`, `ACCOUNT_CLOSED`, `KYC_STATUS_UNCHANGED`, `JOURNAL_ALREADY_REVERSED`). A request that could not get a balance row within the lock timeout is answered with 409 `LOCK_TIMEOUT` and can be retried as it is.
+Business rule violations use 422 with a machine-readable code, for example `CUSTOMER_NOT_VERIFIED`, `BALANCE_NOT_ZERO`, `FUNDS_ON_HOLD`, `INSUFFICIENT_FUNDS`, `DAILY_LIMIT_EXCEEDED`, `SELF_APPROVAL_FORBIDDEN` or `CURRENCY_MISMATCH`; invalid state changes such as freezing an already frozen account, reversing a journal twice or deciding a transfer that is no longer pending use 409 (`ACCOUNT_NOT_ACTIVE`, `ACCOUNT_CLOSED`, `KYC_STATUS_UNCHANGED`, `JOURNAL_ALREADY_REVERSED`, `TRANSFER_NOT_PENDING`). A request that could not get a balance row within the lock timeout is answered with 409 `LOCK_TIMEOUT` and can be retried as it is.
 
 ## Transfers
 
@@ -102,7 +106,21 @@ Every transfer request must carry an `Idempotency-Key` header (1 to 64 letters, 
 
 Validation is a chain of rules, each a Spring bean with an explicit order, evaluated until the first rejection: both accounts exist, they are distinct, both are `ACTIVE`, the accounts and the request share one currency, the sender's KYC is `VERIFIED`, the amount is positive and within `app.limits.per-transaction`, the sender's transfers of the current day plus this amount stay within `app.limits.daily`, and the available balance covers the amount. The rules run after both `account_balance` rows have been locked with `SELECT ... FOR UPDATE` in ascending account id order, so the balance and the daily total they see cannot change before the journal is posted, and two transfers in opposite directions between the same accounts cannot deadlock. The transaction runs at READ COMMITTED with `SET LOCAL lock_timeout` (`app.ledger.lock-timeout`), so a request never waits indefinitely for a row held by another transaction.
 
-A completed transfer is a `TRANSFER` journal (debit sender, credit beneficiary) plus a row in `transfer` with status `COMPLETED` and a reference such as `TRF-0000000012`. A transfer the rules rejected is still written, in a separate transaction after the rollback, as a `FAILED` row carrying the error code; the 422 response includes its `transferId` and `transferReference`, and `GET /api/v1/transfers/{id}` shows it. `PENDING_APPROVAL` is reserved for high-value transfers that need a second pair of eyes.
+A completed transfer is a `TRANSFER` journal (debit sender, credit beneficiary) plus a row in `transfer` with status `COMPLETED` and a reference such as `TRF-0000000012`. A transfer the rules rejected is still written, in a separate transaction after the rollback, as a `FAILED` row carrying the error code; the 422 response includes its `transferId` and `transferReference`, and `GET /api/v1/transfers/{id}` shows it. A transfer above the approval threshold passes the same rules and is then parked instead of posted, as described next.
+
+## Maker-checker and holds
+
+A transfer whose amount is above `app.approval.threshold` (default 200000.00) is not posted by the person who raised it. It is saved as `PENDING_APPROVAL`, answered with 202 and a `Location`, and a **hold** for the amount is placed on the sender's account in the same transaction, under the same row lock the rules ran on. The hold lowers the account's *available* balance but not its *ledger* balance: the money is still the customer's and still on the books, it just cannot be spent twice while a checker decides. `GET /accounts/{id}/balance` shows all three figures (`ledgerBalance`, `availableBalance`, `onHold`), the balance rule of the next transfer sees the reduced available balance, a teller withdrawal is checked against it too, and an account with an active hold cannot be closed (`FUNDS_ON_HOLD`).
+
+A `CHECKER` (or an admin) lists the queue with `GET /approvals` and decides with `POST /approvals/{transferId}/approve` or `/reject`. The four-eyes rule is enforced on the server: the user who raised the transfer cannot decide it, whatever roles they hold, and gets 422 `SELF_APPROVAL_FORBIDDEN`. Approval locks the transfer row, then the two balance rows in ascending account id, captures the hold and posts the `TRANSFER` journal in one transaction, so afterwards the balances are exactly what a direct transfer would have produced; the journal's `createdBy` is the checker, the transfer's `decidedBy` as well. Rejection releases the hold and records the reason as `decisionReason`; the transfer ends `REJECTED`. A decision on a transfer that is no longer pending is answered with 409 `TRANSFER_NOT_PENDING`, which is also what the loser of two simultaneous decisions gets, because both first lock the transfer row. A pending transfer whose sender has been frozen in the meantime cannot be approved (409 `ACCOUNT_NOT_ACTIVE`) and stays in the queue until it is rejected, the account is unfrozen or it expires.
+
+The idempotency row of the original request keeps the 202 response it produced, so a retry of the same `Idempotency-Key` still returns `PENDING_APPROVAL` after the decision; the current state is on `GET /transfers/{id}`.
+
+Pending transfers that nobody decides within `app.approval.pending-expiry` (default 24h) are expired by a scheduled sweep (`app.approval.expiry-cron`, default every minute): each one is handled in its own transaction with the same locks as a decision, its hold is released, the transfer ends `EXPIRED` with `decidedBy` `system`, and an audit row is written. The sweep is idempotent and works in batches of 100.
+
+## Scheduled jobs
+
+Jobs are plain `@Scheduled` methods guarded by ShedLock's `@SchedulerLock`, with the JDBC lock provider and the `shedlock` table. When several instances of the application share the database, each schedule still fires once: the instance that claims the lock row runs the job, the others skip that run. Lock expiry uses the database clock, so instances with drifting clocks cannot both hold a lock. `app.scheduling.enabled=false` turns the schedules off for an instance; the job beans remain and are called directly by the tests.
 
 ## Ledger
 
@@ -136,4 +154,4 @@ Validation failures (400) add an `errors` array of `{ "field", "message" }` entr
 ./mvnw clean verify
 ```
 
-Integration tests start PostgreSQL in a Testcontainers container on a random port, so Docker must be running. The security tests obtain real tokens from the token endpoint and run every endpoint against an anonymous caller and each of the four roles, check that a customer is refused on another customer's accounts and transfers, that expired and tampered tokens are rejected, and that audit rows are written for successful, refused and denied attempts and cannot be updated or deleted. They include an invariant test that runs a random sequence of deposits, withdrawals and reversals and then checks, with SQL, that every journal balances, that each account balance equals the sum of its ledger lines and that the cash in the vault equals what the bank owes its customers. The transfer tests run 100 concurrent transfers between two accounts and check that the total is conserved, run transfers in both directions at once to show the lock ordering prevents deadlocks, race 50 transfers for a balance that covers ten of them and expect exactly ten to succeed, send concurrent requests with one `Idempotency-Key` and expect a single transfer, and hold a balance row from another transaction to show the lock timeout fires with SQLSTATE `55P03` and that the retry then succeeds.
+Integration tests start PostgreSQL in a Testcontainers container on a random port, so Docker must be running. The security tests obtain real tokens from the token endpoint and run every endpoint against an anonymous caller and each of the four roles, check that a customer is refused on another customer's accounts and transfers, that expired and tampered tokens are rejected, and that audit rows are written for successful, refused and denied attempts and cannot be updated or deleted. They include an invariant test that runs a random sequence of deposits, withdrawals and reversals and then checks, with SQL, that every journal balances, that each account balance equals the sum of its ledger lines and that the cash in the vault equals what the bank owes its customers. The transfer tests run 100 concurrent transfers between two accounts and check that the total is conserved, run transfers in both directions at once to show the lock ordering prevents deadlocks, race 50 transfers for a balance that covers ten of them and expect exactly ten to succeed, send concurrent requests with one `Idempotency-Key` and expect a single transfer, and hold a balance row from another transaction to show the lock timeout fires with SQLSTATE `55P03` and that the retry then succeeds. The approval tests cover the 202 and the hold, a second transfer refused because held money is not available, the maker refused as checker, the approve, reject and expiry flows with their balances, hold states, journals and audit rows, a concurrent approve and reject that end in exactly one outcome, the ShedLock row taken by the scheduled run, closure refused while a hold is active, and a SQL check that for every account the gap between ledger and available balance equals the sum of its active holds.

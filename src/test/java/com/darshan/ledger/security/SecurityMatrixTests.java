@@ -35,6 +35,7 @@ class SecurityMatrixTests {
 
     private static final Set<Caller> STAFF = EnumSet.of(Caller.TELLER, Caller.CHECKER, Caller.ADMIN);
     private static final Set<Caller> TELLER_OR_ADMIN = EnumSet.of(Caller.TELLER, Caller.ADMIN);
+    private static final Set<Caller> CHECKER_OR_ADMIN = EnumSet.of(Caller.CHECKER, Caller.ADMIN);
     private static final Set<Caller> ADMIN_ONLY = EnumSet.of(Caller.ADMIN);
     private static final Set<Caller> EVERYONE = EnumSet.allOf(Caller.class);
 
@@ -83,6 +84,10 @@ class SecurityMatrixTests {
                 new Endpoint(HttpMethod.POST, "/api/v1/transfers", "{\"fromAccount\":\"000199999991\","
                         + "\"toAccount\":\"000199999992\",\"amount\":10.00,\"currency\":\"INR\"}", ADMIN_ONLY),
                 new Endpoint(HttpMethod.GET, "/api/v1/transfers/999999", null, STAFF),
+                new Endpoint(HttpMethod.GET, "/api/v1/approvals?status=PENDING_APPROVAL", null, CHECKER_OR_ADMIN),
+                new Endpoint(HttpMethod.POST, "/api/v1/approvals/999999/approve", null, CHECKER_OR_ADMIN),
+                new Endpoint(HttpMethod.POST, "/api/v1/approvals/999999/reject", "{\"reason\":\"Suspicious\"}",
+                        CHECKER_OR_ADMIN),
                 new Endpoint(HttpMethod.POST, "/api/v1/admin/users", "USER", ADMIN_ONLY),
                 new Endpoint(HttpMethod.GET, "/api/v1/admin/users/999999", null, ADMIN_ONLY),
                 new Endpoint(HttpMethod.PUT, "/api/v1/admin/users/999999/customer", "{\"customerId\":1}", ADMIN_ONLY),

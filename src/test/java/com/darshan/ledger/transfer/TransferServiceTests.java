@@ -54,14 +54,25 @@ class TransferServiceTests {
     void aNewKeyRunsTheTransferOnTheNormalisedRequest() {
         given(currentUser.name()).willReturn("alice");
         given(idempotencyService.claim("alice", "order-1", normalised)).willReturn(new IdempotencyClaim.Acquired(7L));
-        TransferResponse response = response();
-        given(processor.process(7L, normalised)).willReturn(response);
+        TransferOutcome created = new TransferOutcome.Created(response());
+        given(processor.process(7L, normalised)).willReturn(created);
 
         TransferOutcome outcome = service.transfer("order-1", raw);
 
-        assertThat(outcome).isEqualTo(new TransferOutcome.Created(response));
+        assertThat(outcome).isSameAs(created);
         verifyNoInteractions(failureRecorder);
         verify(idempotencyService, never()).release(anyLong());
+    }
+
+    @Test
+    void aParkedTransferComesBackAsPendingApproval() {
+        given(currentUser.name()).willReturn("alice");
+        given(idempotencyService.claim("alice", "order-1", normalised)).willReturn(new IdempotencyClaim.Acquired(7L));
+        TransferOutcome pending = new TransferOutcome.PendingApproval(response());
+        given(processor.process(7L, normalised)).willReturn(pending);
+
+        assertThat(service.transfer("order-1", raw)).isSameAs(pending);
+        verifyNoInteractions(failureRecorder);
     }
 
     @Test
@@ -112,6 +123,6 @@ class TransferServiceTests {
         Instant now = Instant.parse("2026-10-22T10:15:30Z");
         return new TransferResponse(12L, "TRF-0000000012", TransferStatus.COMPLETED, 23L, "XXXXXXXX0023", 57L,
                 "XXXXXXXX0057", new BigDecimal("250.00"), "INR", "Rent", 40L, "JRN-0000000040", null, null, "alice",
-                now, now);
+                now, now, null, null);
     }
 }

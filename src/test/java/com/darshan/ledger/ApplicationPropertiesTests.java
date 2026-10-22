@@ -3,11 +3,11 @@ package com.darshan.ledger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.darshan.ledger.account.AccountProperties;
-import com.darshan.ledger.approval.ApprovalProperties;
 import com.darshan.ledger.common.idempotency.IdempotencyProperties;
 import com.darshan.ledger.interest.InterestProperties;
 import com.darshan.ledger.ledger.LedgerProperties;
 import com.darshan.ledger.security.SecurityProperties;
+import com.darshan.ledger.transfer.ApprovalProperties;
 import com.darshan.ledger.transfer.TransferLimitsProperties;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -41,6 +41,7 @@ class ApplicationPropertiesTests {
             ApprovalProperties approval = context.getBean(ApprovalProperties.class);
             assertThat(approval.threshold()).isEqualByComparingTo(new BigDecimal("200000.00"));
             assertThat(approval.pendingExpiry()).isEqualTo(Duration.ofHours(24));
+            assertThat(approval.expiryCron()).isEqualTo("0 * * * * *");
 
             InterestProperties interest = context.getBean(InterestProperties.class);
             assertThat(interest.savingsAnnualRate()).isEqualByComparingTo(new BigDecimal("0.0350"));
@@ -78,6 +79,7 @@ class ApplicationPropertiesTests {
             "app.limits.daily=1.00",
             "app.approval.threshold=0",
             "app.approval.pending-expiry=0s",
+            "app.approval.expiry-cron=hourly",
             "app.interest.savings-annual-rate=1.5",
             "app.interest.accrual-cron=every day at noon",
             "app.security.jwt.issuer=",

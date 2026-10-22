@@ -7,5 +7,6 @@ public record AccountBalanceResponse(
         String maskedAccountNumber,
         BigDecimal ledgerBalance,
         BigDecimal availableBalance,
+        BigDecimal onHold,
         String currency) {
 }

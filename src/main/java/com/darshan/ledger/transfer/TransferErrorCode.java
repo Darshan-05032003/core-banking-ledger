@@ -8,7 +8,8 @@ public enum TransferErrorCode implements ErrorCode {
     SAME_ACCOUNT,
     INVALID_AMOUNT,
     PER_TRANSACTION_LIMIT_EXCEEDED,
-    DAILY_LIMIT_EXCEEDED;
+    DAILY_LIMIT_EXCEEDED,
+    TRANSFER_NOT_PENDING;
 
     @Override
     public String code() {
