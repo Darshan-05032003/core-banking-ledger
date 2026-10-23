@@ -71,6 +71,8 @@ class ApplicationPropertiesTests {
             assertThat(outbox.publishTimeout()).isEqualTo(Duration.ofSeconds(15));
             assertThat(outbox.topicPartitions()).isEqualTo(3);
             assertThat(outbox.topicReplicationFactor()).isEqualTo((short) 1);
+            assertThat(outbox.retention()).isEqualTo(Duration.ofDays(7));
+            assertThat(outbox.purgeCron()).isEqualTo("0 0 2 * * *");
 
             NotificationProperties notification = context.getBean(NotificationProperties.class);
             assertThat(notification.groupId()).isEqualTo("ledger-notifications");
@@ -115,6 +117,8 @@ class ApplicationPropertiesTests {
             "app.outbox.batch-size=5000",
             "app.outbox.publish-timeout=-1s",
             "app.outbox.topic-partitions=0",
+            "app.outbox.retention=0s",
+            "app.outbox.purge-cron=weekly",
             "app.notification.group-id=",
             "app.notification.retry-attempts=0",
             "app.notification.retry-backoff=-1s"

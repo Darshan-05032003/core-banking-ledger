@@ -65,6 +65,8 @@ app:
     publish-timeout: ${APP_OUTBOX_PUBLISH_TIMEOUT:15s}
     topic-partitions: ${APP_OUTBOX_TOPIC_PARTITIONS:3}
     topic-replication-factor: ${APP_OUTBOX_TOPIC_REPLICATION_FACTOR:1}
+    retention: ${APP_OUTBOX_RETENTION:7d}
+    purge-cron: ${APP_OUTBOX_PURGE_CRON:0 0 2 * * *}
   notification:
     group-id: ${APP_NOTIFICATION_GROUP_ID:ledger-notifications}
     retry-attempts: ${APP_NOTIFICATION_RETRY_ATTEMPTS:3}
