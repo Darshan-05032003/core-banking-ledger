@@ -18,25 +18,29 @@ public class TransferService {
     private final TransferRepository transferRepository;
     private final TransferMapper transferMapper;
     private final CurrentUser currentUser;
+    private final TransferMetrics metrics;
 
     public TransferService(IdempotencyService idempotencyService, TransferProcessor processor,
             TransferFailureRecorder failureRecorder, TransferRepository transferRepository,
-            TransferMapper transferMapper, CurrentUser currentUser) {
+            TransferMapper transferMapper, CurrentUser currentUser, TransferMetrics metrics) {
         this.idempotencyService = idempotencyService;
         this.processor = processor;
         this.failureRecorder = failureRecorder;
         this.transferRepository = transferRepository;
         this.transferMapper = transferMapper;
         this.currentUser = currentUser;
+        this.metrics = metrics;
     }
 
     public TransferOutcome transfer(String idempotencyKey, TransferRequest request) {
-        TransferRequest normalised = request.normalised();
-        IdempotencyClaim claim = idempotencyService.claim(currentUser.name(), idempotencyKey, normalised);
-        return switch (claim) {
-            case IdempotencyClaim.Replayed replayed -> new TransferOutcome.Replayed(replayed.response());
-            case IdempotencyClaim.Acquired acquired -> execute(acquired.id(), normalised);
-        };
+        return metrics.measure(() -> {
+            TransferRequest normalised = request.normalised();
+            IdempotencyClaim claim = idempotencyService.claim(currentUser.name(), idempotencyKey, normalised);
+            return switch (claim) {
+                case IdempotencyClaim.Replayed replayed -> new TransferOutcome.Replayed(replayed.response());
+                case IdempotencyClaim.Acquired acquired -> execute(acquired.id(), normalised);
+            };
+        });
     }
 
     @Transactional(readOnly = true)

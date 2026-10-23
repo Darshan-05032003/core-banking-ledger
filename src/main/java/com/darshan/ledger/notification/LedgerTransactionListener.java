@@ -21,10 +21,13 @@ import tools.jackson.databind.ObjectMapper;
 public class LedgerTransactionListener {
 
     private final NotificationService notificationService;
+    private final NotificationMetrics metrics;
     private final ObjectMapper objectMapper;
 
-    public LedgerTransactionListener(NotificationService notificationService, ObjectMapper objectMapper) {
+    public LedgerTransactionListener(NotificationService notificationService, NotificationMetrics metrics,
+            ObjectMapper objectMapper) {
         this.notificationService = notificationService;
+        this.metrics = metrics;
         this.objectMapper = objectMapper;
     }
 
@@ -32,7 +35,9 @@ public class LedgerTransactionListener {
     public void onMessage(ConsumerRecord<String, String> record) {
         MDC.put(CorrelationIdFilter.MDC_KEY, eventIdHeader(record));
         try {
-            notificationService.notify(parse(record.value()));
+            // Counted here, after the service's transaction has committed, so a rollback is not a "sent".
+            notificationService.notify(parse(record.value()))
+                    .ifPresent(notification -> metrics.sent(notification.getChannel()));
         } finally {
             MDC.remove(CorrelationIdFilter.MDC_KEY);
         }

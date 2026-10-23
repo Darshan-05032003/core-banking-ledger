@@ -5,6 +5,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.FixedBackOff;
@@ -21,11 +22,15 @@ class NotificationErrorHandlingConfiguration {
 
     @Bean
     DefaultErrorHandler notificationErrorHandler(KafkaTemplate<String, String> kafkaTemplate,
-            NotificationProperties properties) {
+            NotificationProperties properties, NotificationMetrics metrics) {
         DeadLetterPublishingRecoverer deadLetters = new DeadLetterPublishingRecoverer(kafkaTemplate,
                 (record, exception) -> new TopicPartition(LedgerTopics.TRANSACTIONS_DLT, record.partition()));
+        ConsumerRecordRecoverer countedDeadLetters = (record, exception) -> {
+            deadLetters.accept(record, exception);
+            metrics.deadLettered();
+        };
         FixedBackOff backOff = new FixedBackOff(properties.retryBackoff().toMillis(), properties.retryAttempts() - 1L);
-        DefaultErrorHandler handler = new DefaultErrorHandler(deadLetters, backOff);
+        DefaultErrorHandler handler = new DefaultErrorHandler(countedDeadLetters, backOff);
         handler.addNotRetryableExceptions(UnsupportedEventException.class);
         return handler;
     }

@@ -16,6 +16,7 @@ import com.darshan.ledger.ledger.PostingService;
 import com.darshan.ledger.security.CurrentUser;
 import com.darshan.ledger.transfer.Transfer;
 import com.darshan.ledger.transfer.TransferMapper;
+import com.darshan.ledger.transfer.TransferMetrics;
 import com.darshan.ledger.transfer.TransferRepository;
 import com.darshan.ledger.transfer.TransferResponse;
 import com.darshan.ledger.transfer.TransferStatus;
@@ -44,17 +45,19 @@ public class ApprovalService {
     private final PostingService postingService;
     private final LockTimeout lockTimeout;
     private final TransferMapper transferMapper;
+    private final TransferMetrics transferMetrics;
     private final CurrentUser currentUser;
     private final Clock clock;
 
     public ApprovalService(TransferRepository transferRepository, HoldService holdService,
             PostingService postingService, LockTimeout lockTimeout, TransferMapper transferMapper,
-            CurrentUser currentUser, Clock clock) {
+            TransferMetrics transferMetrics, CurrentUser currentUser, Clock clock) {
         this.transferRepository = transferRepository;
         this.holdService = holdService;
         this.postingService = postingService;
         this.lockTimeout = lockTimeout;
         this.transferMapper = transferMapper;
+        this.transferMetrics = transferMetrics;
         this.currentUser = currentUser;
         this.clock = clock;
     }
@@ -78,6 +81,7 @@ public class ApprovalService {
                 List.of(PostingLeg.debit(sender, transfer.getAmount()),
                         PostingLeg.credit(beneficiary, transfer.getAmount()))));
         transfer.approve(journal, checker, now);
+        transferMetrics.completed();
         log.info("Transfer {} approved by {} and posted as {}", transfer.getReference(), checker,
                 journal.getReference());
         return transferMapper.toResponse(transfer);

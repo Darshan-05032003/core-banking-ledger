@@ -1,8 +1,10 @@
 package com.darshan.ledger.outbox;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -89,6 +91,14 @@ public class OutboxEventRepository {
                 .param("cutoff", cutoff.atOffset(ZoneOffset.UTC))
                 .param("limit", limit)
                 .update();
+    }
+
+    // The partial index on unpublished rows answers this with one probe, however large the table.
+    public Optional<Instant> oldestUnpublishedCreatedAt() {
+        return jdbc.sql("SELECT min(created_at) FROM outbox_event WHERE published_at IS NULL")
+                .query((rs, rowNum) -> rs.getObject(1, OffsetDateTime.class))
+                .optional()
+                .map(OffsetDateTime::toInstant);
     }
 
     public long countUnpublished() {
