@@ -1,6 +1,10 @@
 package com.darshan.ledger.auth;
 
 import com.darshan.ledger.audit.Audited;
+import com.darshan.ledger.common.openapi.ApiTags;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 @RestController
+@Tag(name = ApiTags.ADMIN)
 @RequestMapping("/api/v1/admin/users")
 public class AppUserController {
 
@@ -24,6 +29,8 @@ public class AppUserController {
         this.appUserService = appUserService;
     }
 
+    @Operation(operationId = "createUser", summary = "Create a login with one or more roles")
+    @ApiResponse(responseCode = "201", description = "User created")
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
     @Audited(action = "USER_CREATE", targetType = "APP_USER", targetId = "#result?.id()",
@@ -37,12 +44,14 @@ public class AppUserController {
         return ResponseEntity.created(location).body(user);
     }
 
+    @Operation(operationId = "getUser", summary = "Fetch a login; the password hash is never returned")
     @GetMapping("/{userId}")
     @PreAuthorize("hasRole('ADMIN')")
     public AppUserResponse get(@PathVariable Long userId) {
         return appUserService.get(userId);
     }
 
+    @Operation(operationId = "linkCustomer", summary = "Link a CUSTOMER login to a customer")
     @PutMapping("/{userId}/customer")
     @PreAuthorize("hasRole('ADMIN')")
     @Audited(action = "USER_LINK_CUSTOMER", targetType = "APP_USER", targetId = "#userId",
@@ -51,6 +60,7 @@ public class AppUserController {
         return appUserService.linkCustomer(userId, request);
     }
 
+    @Operation(operationId = "disableUser", summary = "Block a login from obtaining tokens")
     @PostMapping("/{userId}/disable")
     @PreAuthorize("hasRole('ADMIN')")
     @Audited(action = "USER_DISABLE", targetType = "APP_USER", targetId = "#userId")
@@ -58,6 +68,7 @@ public class AppUserController {
         return appUserService.disable(userId);
     }
 
+    @Operation(operationId = "enableUser", summary = "Restore a disabled login")
     @PostMapping("/{userId}/enable")
     @PreAuthorize("hasRole('ADMIN')")
     @Audited(action = "USER_ENABLE", targetType = "APP_USER", targetId = "#userId")

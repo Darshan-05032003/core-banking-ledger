@@ -1,9 +1,12 @@
 package com.darshan.ledger.ledger;
 
 import com.darshan.ledger.audit.Audited;
+import com.darshan.ledger.common.openapi.ApiTags;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.format.annotation.DateTimeFormat.ISO;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -13,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 // date names the business day the report is filed under; the figures are always the ledger as it
 // stands now, because the balance rows have no history to check an earlier day against.
 @RestController
+@Tag(name = ApiTags.JOBS)
 public class EndOfDayCheckController {
 
     private final EndOfDayCheck check;
@@ -21,6 +25,7 @@ public class EndOfDayCheckController {
         this.check = check;
     }
 
+    @Operation(operationId = "runEndOfDayCheck", summary = "Reconcile balances, journals and totals now")
     @PostMapping("/api/v1/admin/jobs/eod-check")
     @PreAuthorize("hasRole('ADMIN')")
     @Audited(action = "EOD_CHECK_RUN", targetType = "BUSINESS_DATE",

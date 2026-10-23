@@ -1,12 +1,18 @@
 package com.darshan.ledger.statement;
 
 import com.darshan.ledger.audit.Audited;
+import com.darshan.ledger.common.openapi.ApiTags;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.format.annotation.DateTimeFormat.ISO;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -21,6 +27,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 // Statements are personal data, so every page view and every download is audited, including
 // the ones that were refused.
 @RestController
+@Tag(name = ApiTags.STATEMENTS)
 public class StatementController {
 
     static final int MAX_PAGE_SIZE = 200;
@@ -32,6 +39,7 @@ public class StatementController {
         this.statementService = statementService;
     }
 
+    @Operation(operationId = "getStatement", summary = "Ledger lines with a running balance, one keyset page at a time")
     @GetMapping("/api/v1/accounts/{accountId}/statement")
     @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN') "
             + "or (hasRole('CUSTOMER') and @accountAccess.isOwner(#accountId, authentication))")
@@ -47,6 +55,9 @@ public class StatementController {
 
     // Everything that can fail is resolved before the body is returned; the body itself is
     // written by the servlet container on another thread once the 200 and the headers are out.
+    @Operation(operationId = "downloadStatementCsv", summary = "The whole period streamed as a CSV file")
+    @ApiResponse(responseCode = "200", description = "CSV attachment, one row per ledger line",
+            content = @Content(mediaType = "text/csv", schema = @Schema(type = "string", format = "binary")))
     @GetMapping(value = "/api/v1/accounts/{accountId}/statement.csv", produces = "text/csv")
     @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN') "
             + "or (hasRole('CUSTOMER') and @accountAccess.isOwner(#accountId, authentication))")
