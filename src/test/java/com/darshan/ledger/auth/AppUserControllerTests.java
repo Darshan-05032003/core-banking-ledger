@@ -4,9 +4,11 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -65,10 +67,37 @@ class AppUserControllerTests {
                 .andExpect(jsonPath("$.errors[?(@.field == 'roles')]").exists());
         mockMvc.perform(post("/api/v1/admin/users").with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"teller1\",\"password\":\"correct-horse-battery\",\"roles\":[\"ROOT\"]}"))
+                        .content("{\"username\":\"teller1\",\"password\":\"correct-horse-battery\","
+                                + "\"roles\":[\"ROOT\"]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("MALFORMED_REQUEST"));
         verifyNoInteractions(appUserService);
+    }
+
+    @Test
+    void fetchingAUserReturnsItWithoutTheHash() throws Exception {
+        given(appUserService.get(5L)).willReturn(new AppUserResponse(5L, "teller1", Set.of(Role.TELLER), null,
+                true, "admin", Instant.parse("2026-10-22T10:15:30Z")));
+
+        mockMvc.perform(get("/api/v1/admin/users/5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(5))
+                .andExpect(jsonPath("$.username").value("teller1"))
+                .andExpect(jsonPath("$.createdBy").value("admin"))
+                .andExpect(content().string(not(containsString("hash"))));
+    }
+
+    @Test
+    void linkingACustomerReturnsTheUpdatedLogin() throws Exception {
+        given(appUserService.linkCustomer(eq(5L), any())).willReturn(new AppUserResponse(5L, "asha",
+                Set.of(Role.CUSTOMER), 42L, true, "admin", Instant.parse("2026-10-22T10:15:30Z")));
+
+        mockMvc.perform(put("/api/v1/admin/users/5/customer").with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"customerId\":42}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customerId").value(42))
+                .andExpect(jsonPath("$.roles[0]").value("CUSTOMER"));
     }
 
     @Test
