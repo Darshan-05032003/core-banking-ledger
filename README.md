@@ -124,6 +124,12 @@ curl -s -X POST http://localhost:8082/api/v1/auth/token -H 'Content-Type: applic
 docker compose down -v      # stop and drop the database volume
 ```
 
+To walk through the main flow by hand, use the admin token to create a `TELLER`, a `CHECKER` and a `CUSTOMER` login with `POST /api/v1/admin/users` (the customer login takes the `customerId` it belongs to, so onboard the customer first), then onboard, verify KYC, open accounts and deposit as the teller, transfer as the customer and approve as the checker, as listed under [Endpoints](#endpoints). A transfer names both accounts by their full twelve-digit number, which the API never returns; on a local stack read them from the database:
+
+```bash
+docker compose exec postgres psql -U ledger -d ledger -c 'select id, account_number from account'
+```
+
 To run with real signing keys, generate a pair and pass it as PEM text (line breaks may be written as `\n`) or as a file location:
 
 ```bash
@@ -154,12 +160,11 @@ The `Dockerfile` has two stages. The build stage runs the Maven wrapper on `ecli
 ### Locally with Maven
 
 ```bash
-cp .env.example .env          # adjust if needed
 docker compose up -d postgres kafka
-./mvnw spring-boot:run        # http://localhost:8082, dev profile
+APP_ADMIN_PASSWORD=change-me-before-starting ./mvnw spring-boot:run   # http://localhost:8082, dev profile
 ```
 
-Every setting is an environment variable with a local default; `.env.example` lists them all with their meaning.
+The Maven run takes its settings from environment variables, not from `.env`, which only docker compose reads. Every variable has the local default listed in `.env.example` (the database on `localhost:5433`, Kafka on `localhost:9094`), so nothing else needs to be set; to change a setting, export its variable before starting. `APP_ADMIN_PASSWORD` is the one value without a default: when it is not set, the `dev` profile logs a warning and seeds no admin login, which leaves a fresh database with no way to sign in.
 
 ## API
 
