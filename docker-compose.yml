@@ -39,5 +39,35 @@ services:
       retries: 12
       start_period: 20s
 
+  app:
+    build: .
+    image: core-banking-ledger:local
+    # .env is optional: without it the stack runs the dev profile with the defaults below. The
+    # three network-shaped settings are pinned here because the application reaches PostgreSQL
+    # and Kafka over the compose network, not through the host ports.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-ledger}
+      DB_USERNAME: ${DB_USERNAME:-ledger}
+      DB_PASSWORD: ${DB_PASSWORD:-ledger}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: 8082
+      APP_ADMIN_USERNAME: ${APP_ADMIN_USERNAME:-admin}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-change-me-before-starting}
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
 volumes:
   postgres-data:

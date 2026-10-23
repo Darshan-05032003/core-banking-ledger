@@ -1,6 +1,10 @@
 package com.darshan.ledger.ledger;
 
 import com.darshan.ledger.audit.Audited;
+import com.darshan.ledger.common.openapi.ApiTags;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 @RestController
+@Tag(name = ApiTags.JOURNALS)
 public class JournalController {
 
     private final JournalService journalService;
@@ -21,12 +26,15 @@ public class JournalController {
         this.journalService = journalService;
     }
 
+    @Operation(operationId = "getJournal", summary = "A posted journal with its ledger lines")
     @GetMapping("/api/v1/journals/{journalId}")
     @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN')")
     public JournalResponse get(@PathVariable Long journalId) {
         return journalService.get(journalId);
     }
 
+    @Operation(operationId = "reverseJournal", summary = "Correct a journal by posting the opposite legs")
+    @ApiResponse(responseCode = "201", description = "Reversal journal posted")
     @PostMapping("/api/v1/journals/{journalId}/reversal")
     @PreAuthorize("hasRole('ADMIN')")
     @Audited(action = "JOURNAL_REVERSAL", targetType = "JOURNAL", targetId = "#journalId",

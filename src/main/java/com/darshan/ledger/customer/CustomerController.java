@@ -1,6 +1,10 @@
 package com.darshan.ledger.customer;
 
 import com.darshan.ledger.audit.Audited;
+import com.darshan.ledger.common.openapi.ApiTags;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +19,7 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 // Each state change is its own endpoint so that it can carry its own role rule.
 @RestController
+@Tag(name = ApiTags.CUSTOMERS)
 @RequestMapping("/api/v1/customers")
 public class CustomerController {
 
@@ -24,6 +29,8 @@ public class CustomerController {
         this.customerService = customerService;
     }
 
+    @Operation(operationId = "onboardCustomer", summary = "Onboard a customer; KYC starts as PENDING")
+    @ApiResponse(responseCode = "201", description = "Customer created")
     @PostMapping
     @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
     public ResponseEntity<CustomerResponse> onboard(@Valid @RequestBody OnboardCustomerRequest request) {
@@ -35,6 +42,7 @@ public class CustomerController {
         return ResponseEntity.created(location).body(customer);
     }
 
+    @Operation(operationId = "getCustomer", summary = "Fetch a customer")
     @GetMapping("/{customerId}")
     @PreAuthorize("hasAnyRole('TELLER', 'CHECKER', 'ADMIN') "
             + "or (hasRole('CUSTOMER') and @customerAccess.isSelf(#customerId, authentication))")
@@ -42,6 +50,7 @@ public class CustomerController {
         return customerService.get(customerId);
     }
 
+    @Operation(operationId = "verifyKyc", summary = "Mark the customer's KYC as VERIFIED")
     @PostMapping("/{customerId}/kyc/verify")
     @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
     @Audited(action = "KYC_VERIFY", targetType = "CUSTOMER", targetId = "#customerId")
@@ -49,6 +58,7 @@ public class CustomerController {
         return customerService.verifyKyc(customerId);
     }
 
+    @Operation(operationId = "rejectKyc", summary = "Mark the customer's KYC as REJECTED with a reason")
     @PostMapping("/{customerId}/kyc/reject")
     @PreAuthorize("hasAnyRole('TELLER', 'ADMIN')")
     @Audited(action = "KYC_REJECT", targetType = "CUSTOMER", targetId = "#customerId",

@@ -1,225 +1,326 @@
 # core-banking-ledger
 
-A core banking backend built with Java 21 and Spring Boot that records customers, accounts, deposits, withdrawals and transfers in a double-entry ledger backed by PostgreSQL, and publishes every posted journal to Kafka through a transactional outbox.
+[![CI](https://github.com/Darshan-05032003/core-banking-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/Darshan-05032003/core-banking-ledger/actions/workflows/ci.yml)
 
-## Requirements
+A core banking backend written in Java 21 and Spring Boot. It keeps customers and their accounts, takes cash deposits and withdrawals at the counter, moves money between accounts, and records every movement in a double-entry ledger on PostgreSQL: each business event is a journal whose debits equal its credits, the ledger tables can only be appended to, and mistakes are corrected with a reversal rather than an edit, so the books always add up and always show what happened. Around the ledger sit the controls a bank needs: idempotent payment requests, transfers that stay correct under concurrent load, maker-checker approval with a hold on the money for large amounts, a tamper-proof audit trail, daily interest accrual, an end-of-day reconciliation, and events published to Kafka through a transactional outbox so downstream systems see every posting exactly in the order it happened.
 
-- JDK 21
-- Docker with Compose (for the local PostgreSQL and Kafka, and for the integration tests, which use Testcontainers)
+## Tech stack
 
-## Running locally
+| Area | Choice |
+|---|---|
+| Language and framework | Java 21, Spring Boot 4.1, Spring MVC, Spring Data JPA (Hibernate), Spring Security OAuth2 Resource Server |
+| Database | PostgreSQL 16, Flyway migrations, row locks, triggers, window functions, partial indexes |
+| Messaging | Apache Kafka 4 (KRaft), spring-kafka, transactional outbox, dead-letter topic |
+| Jobs and locks | Spring scheduling with ShedLock (JDBC) |
+| API | REST with RFC 9457 problem responses, OpenAPI 3.1 through springdoc, Swagger UI |
+| Observability | Actuator health and readiness probes, Micrometer with Prometheus, Elastic Common Schema JSON logs in prod, correlation ids |
+| Build and delivery | Maven wrapper, JaCoCo, ArchUnit, Testcontainers, multi-stage Docker image, docker compose, GitHub Actions |
+
+## Architecture
+
+One deployable Spring Boot application, organised by feature package. Every money movement funnels through `PostingService` in the `ledger` package; ArchUnit tests keep it that way.
+
+```mermaid
+flowchart LR
+    client["Clients: tellers, checkers, customers, admins"]
+    subgraph app[core-banking-ledger]
+        direction TB
+        sec["security: JWT resource server, roles, ownership checks"]
+        api["customer, account, transfer, approval, statement, auth controllers"]
+        svc["services and transfer rule chain"]
+        posting["ledger: PostingService, holds, balances"]
+        outbox["outbox relay, ShedLock"]
+        jobs["jobs: approval expiry, interest accrual, end-of-day check, outbox purge"]
+        consumer["notification consumer, idempotent"]
+        audit["audit aspect"]
+        metrics["actuator, Micrometer"]
+        sec --> api --> svc --> posting
+        svc --> audit
+        posting --> outbox
+        jobs --> posting
+    end
+    pg[("PostgreSQL: customer, account, journal_entry, ledger_entry, account_balance, hold, transfer, idempotency_key, outbox_event, audit_log, shedlock")]
+    kafka[["Kafka: ledger.transactions.v1 and its DLT"]]
+    prom["Prometheus"]
+    client -->|HTTPS, bearer token| sec
+    posting --> pg
+    outbox -->|publish, mark published| pg
+    outbox --> kafka
+    kafka --> consumer --> pg
+    metrics --> prom
+```
+
+## Transfer flow
+
+What happens to `POST /api/v1/transfers`, from the request to the notification a downstream system records:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Customer client
+    participant T as TransferController
+    participant I as IdempotencyService
+    participant R as Rule chain
+    participant P as PostingService
+    participant DB as PostgreSQL
+    participant O as Outbox relay
+    participant K as Kafka
+    participant N as Notification consumer
+    C->>T: POST /transfers + Idempotency-Key + bearer token
+    T->>T: rate limit per user, ownership of fromAccount
+    T->>I: claim key (own short transaction)
+    I->>DB: INSERT idempotency_key (unique requester+key)
+    alt key already finished
+        I-->>C: stored status and body, Idempotent-Replayed: true
+    end
+    T->>DB: SELECT account_balance FOR UPDATE, ascending account id, lock_timeout set
+    T->>R: accounts exist, distinct, active, same currency, KYC, limits, daily total, available balance
+    alt a rule fails
+        R-->>C: 422 with errorCode, FAILED transfer row kept
+    else amount above approval threshold
+        T->>DB: transfer PENDING_APPROVAL + hold (available balance down, ledger balance unchanged)
+        T-->>C: 202 Accepted, decided later by a checker
+    else
+        T->>P: post TRANSFER journal (debit sender, credit beneficiary)
+        P->>DB: journal_entry, ledger_entry, balances, outbox_event in one transaction
+        T->>DB: store response on the idempotency row, commit
+        T-->>C: 201 Created
+    end
+    O->>DB: SELECT outbox_event FOR UPDATE SKIP LOCKED (oldest first)
+    O->>K: send keyed by account id, acks=all
+    O->>DB: published_at = now
+    K->>N: LedgerTransactionPosted v1
+    N->>DB: processed_event (ON CONFLICT DO NOTHING) + notification row
+```
+
+## Key design decisions
+
+- **Double-entry and append-only.** Money is never a number that gets overwritten. Every event is a journal with legs that debit and credit customer or general-ledger accounts (`CASH_VAULT`, `INTEREST_EXPENSE`, `SUSPENSE`); `PostingService` refuses an unbalanced journal, and database triggers reject `UPDATE`, `DELETE` and `TRUNCATE` on `journal_entry`, `ledger_entry` and `audit_log`. A correction is a reversal journal linked through `reversal_of`, which a unique constraint lets happen once.
+- **Lock ordering instead of SERIALIZABLE.** A transfer locks both `account_balance` rows with `SELECT ... FOR UPDATE` in ascending account id order inside a READ COMMITTED transaction with a `lock_timeout`. Two opposite transfers between the same accounts then queue instead of deadlocking, and a request never waits forever. Optimistic locking would have made every busy account retry under load.
+- **Idempotency by unique constraint.** The `Idempotency-Key` is claimed by inserting a row in its own short transaction, so two concurrent requests with the same key are decided by the database, not by application code. The first response is stored with the transfer and replayed as is; the same key with another payload is refused.
+- **Maker-checker and holds.** Above a threshold the person who raises a transfer cannot post it. The money is put on hold (available balance down, ledger balance unchanged) and a different user with the CHECKER role approves or rejects; the four-eyes rule is enforced on the server, undecided transfers expire by a scheduled sweep.
+- **Transactional outbox.** The event is written to `outbox_event` in the posting transaction and published by a relay that reads with `FOR UPDATE SKIP LOCKED`, so a journal and its event are committed or rolled back together. Delivery is at least once; the consumer de-duplicates through `processed_event`, and poison records go to a dead-letter topic.
+- **ShedLock on every schedule.** Relay, expiry sweep, interest accrual, end-of-day check and purge each fire once across all instances, and every job is safe to run twice.
+- **Keyset pagination for statements.** Pages continue from an opaque cursor over `(posted_at, id)` instead of `OFFSET`, so a growing ledger never shifts or repeats a line, and the running balance comes from a SQL window function over the period. The CSV download streams through a JDBC cursor.
+- **Interest accrued daily, paid monthly.** Daily figures are kept at four decimals under a unique `(account, date)` key so a re-run cannot double-accrue; the month-end payout rounds the sum `HALF_EVEN` to money and posts one `INTEREST` journal.
+- **End-of-day checks.** A nightly job recomputes every balance from the ledger lines, checks that every journal balances and that all debits equal all credits, and reports a discrepancy as an `ERROR` log line, a metric and an audit row.
+- **Money is a value object.** `Money` wraps a `BigDecimal` at scale 2 with a currency and refuses to mix currencies; `AccountNumber` validates its Luhn check digit. Numbers in the database are `NUMERIC(19,2)` with a `CHAR(3)` currency.
+
+## Running
+
+### With docker compose
+
+```bash
+docker compose up --build -d --wait
+```
+
+This builds the image and starts PostgreSQL (host port 5433), Kafka (host port 9094) and the application (host port 8082) with health checks; `--wait` returns once the application's readiness probe is up. `.env` is optional: copy `.env.example` to `.env` to change any setting. Without it the stack runs the `dev` profile, which generates a throwaway RSA key pair for the tokens and seeds one ADMIN login (`APP_ADMIN_USERNAME` / `APP_ADMIN_PASSWORD`, defaulting to `admin` / `change-me-before-starting`) so the first users can be created through the API. Inside the compose network the application reaches `postgres:5432` and `kafka:9092`; the host ports exist for tools on your machine.
+
+```bash
+curl -s http://localhost:8082/actuator/health
+# Swagger UI: http://localhost:8082/swagger-ui.html
+curl -s -X POST http://localhost:8082/api/v1/auth/token -H 'Content-Type: application/json' \
+     -d '{"username":"admin","password":"change-me-before-starting"}'
+docker compose down -v      # stop and drop the database volume
+```
+
+To run with real signing keys, generate a pair and pass it as PEM text (line breaks may be written as `\n`) or as a file location:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-private.pem
+openssl pkey -in jwt-private.pem -pubout -out jwt-public.pem
+```
+
+Either put `APP_SECURITY_JWT_PRIVATE_KEY` and `APP_SECURITY_JWT_PUBLIC_KEY` into `.env` with the PEM text, or mount the files with a `docker-compose.override.yml` (ignored by git) and point the variables at them:
+
+```yaml
+services:
+  app:
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      APP_SECURITY_JWT_PRIVATE_KEY: file:/run/secrets/jwt-private.pem
+      APP_SECURITY_JWT_PUBLIC_KEY: file:/run/secrets/jwt-public.pem
+    volumes:
+      - ./jwt-private.pem:/run/secrets/jwt-private.pem:ro
+      - ./jwt-public.pem:/run/secrets/jwt-public.pem:ro
+```
+
+In the `prod` profile the application refuses to start without keys, logs JSON, and seeds no user; create the first ADMIN with an `INSERT` into `app_user` or run the dev profile once against the same database.
+
+### The image
+
+The `Dockerfile` has two stages. The build stage runs the Maven wrapper on `eclipse-temurin:21-jdk`, resolves dependencies in a layer of their own with a BuildKit cache mount, packages the jar without running the tests (CI runs them), and extracts it with `java -Djarmode=tools -jar app.jar extract --layers --launcher`. The runtime stage copies the layers onto `eclipse-temurin:21-jre` in order of volatility (dependencies, loader, snapshot dependencies, application), so a code change rebuilds and ships only the application layer; it runs as a dedicated non-root user (uid 10001, above the uid the base image already uses), sets `JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError` so the heap follows the container's memory limit and an exhausted heap restarts the container instead of limping on, and declares a `HEALTHCHECK` against `/actuator/health/readiness`. The compose file gives the container a 768 MB memory limit.
+
+### Locally with Maven
 
 ```bash
 cp .env.example .env          # adjust if needed
-docker compose up -d          # PostgreSQL on localhost:5433, Kafka on localhost:9094
-./mvnw spring-boot:run        # application on http://localhost:8082
+docker compose up -d postgres kafka
+./mvnw spring-boot:run        # http://localhost:8082, dev profile
 ```
 
-The `dev` profile is active by default. Set `SPRING_PROFILES_ACTIVE=prod` for production-style logging and health output. Every setting is read from an environment variable with a local default; `.env.example` lists them all.
-
-## Configuration
-
-Application settings live under the `app.*` prefix and are bound to validated `@ConfigurationProperties` classes, so an invalid value stops the application at start-up instead of failing later.
-
-| Prefix | Purpose |
-|---|---|
-| `app.account` | Branch code used in account numbers and the default account currency |
-| `app.ledger` | Lock timeout applied to every transaction that locks balance rows, and the cron of the end-of-day check |
-| `app.idempotency` | How long an unfinished `Idempotency-Key` may block before a retry takes it over |
-| `app.limits` | Per-transaction and daily transfer limits |
-| `app.approval` | Maker-checker threshold, how long a pending transfer waits before it expires, and the cron of the expiry sweep |
-| `app.statement` | The longest period one statement request may cover (default one year) |
-| `app.outbox` | Relay delay and batch size, the publish acknowledgement timeout, the partition count and replication factor of the event topics, and how long published rows are kept before the nightly purge |
-| `app.notification` | Consumer group of the notification consumer, delivery attempts before a record is dead-lettered, and the backoff between attempts |
-| `app.interest` | Annual savings interest rate and the cron of the daily accrual |
-| `app.security` | JWT issuer, token lifetime, signing key pair and transfer rate limit |
-| `app.scheduling` | `enabled` switches the `@Scheduled` jobs off for an instance that should only serve requests (the test profile does this) |
-
-## Authentication and roles
-
-The application is an OAuth2 resource server for tokens it issues itself. `POST /api/v1/auth/token` with `{"username", "password"}` checks the password against the BCrypt hash in `app_user` and returns a short-lived JWT signed with RS256:
-
-```json
-{ "accessToken": "eyJ...", "tokenType": "Bearer", "expiresIn": 900, "expiresAt": "2026-10-22T10:30:30Z" }
-```
-
-Every other endpoint expects `Authorization: Bearer <token>`. The token carries the username, the roles and, for a customer login, the linked customer id, so no request after login touches the user table. Sessions and CSRF protection are off: there is no cookie for a cross-site request to ride on. A missing or invalid token is answered with 401 and a `WWW-Authenticate: Bearer` header; a valid token without the required role gets 403. Both carry the same problem body as every other error.
-
-The signing key pair comes from `APP_SECURITY_JWT_PRIVATE_KEY` and `APP_SECURITY_JWT_PUBLIC_KEY` (PEM text or a `file:` location). In the `prod` profile the application refuses to start without them; `dev` and `test` generate a throwaway pair at start-up, so tokens do not survive a restart there. Keys are never committed. The `dev` profile also seeds one ADMIN user from `APP_ADMIN_USERNAME` and `APP_ADMIN_PASSWORD`, which is how the first users of a fresh database are created.
-
-| Role | May |
-|---|---|
-| `CUSTOMER` | Read its own customer record, accounts and balances; send transfers from its own accounts and read them. A customer login is linked to exactly one customer id by an admin. |
-| `TELLER` | Onboard customers, decide KYC, open accounts, deposit and withdraw cash, read accounts, journals and transfers |
-| `CHECKER` | Read customers, accounts, journals and transfers; list, approve and reject transfers waiting for approval |
-| `ADMIN` | Everything above, plus freeze, unfreeze and close accounts, reverse journals, manage users and read all actuator endpoints. An admin may decide approvals, but never one of its own transfers |
-
-Role rules live on each controller method with `@PreAuthorize`. Ownership is decided by small beans referenced from the expression, for example `@accountAccess.isOwner(#accountId, authentication)`, which run one existence query against the customer id in the token; an account that is not the caller's is reported as 403 whether or not it exists.
-
-## Audit trail
-
-Every money movement (deposit, withdrawal, reversal, transfer), every approval decision, every statement view or download and every administrative action (KYC decision, freeze, unfreeze, close, user management) writes a row to `audit_log`: actor, roles, action, target type and id, outcome `SUCCESS` or `FAILURE`, the error code of a failure, client IP, correlation id, timestamp and a JSON `details` column with the business values of the request (amounts, masked account numbers, reasons; never passwords or full account numbers). The controller methods are marked `@Audited`, and an aspect writes the row after the method has returned or thrown, in its own transaction, so a withdrawal refused for insufficient funds or a freeze attempted by a teller without the right role is on record just like a successful one. A pending transfer that expires is recorded the same way by the job that expires it, with `system` as the actor and no client IP, as are the nightly interest accrual and end-of-day check runs and every discrepancy the check finds. Database triggers make `audit_log` append-only, as for the ledger tables.
-
-## Rate limiting
-
-`POST /api/v1/transfers` is limited per user to `app.security.rate-limit.transfers-per-minute` (default 20) with a token bucket that refills continuously. A request over the limit is answered with 429, `errorCode` `RATE_LIMIT_EXCEEDED`, a `Retry-After` header in seconds and the same value as `retryAfterSeconds` in the body. The buckets are in memory, so each instance of the application counts on its own.
+Every setting is an environment variable with a local default; `.env.example` lists them all with their meaning.
 
 ## API
 
-All endpoints are under `/api/v1`. The last column lists who may call the endpoint; "owner" means a `CUSTOMER` login linked to the customer the record belongs to.
+The interactive documentation is at `/swagger-ui.html` and the OpenAPI document at `/v3/api-docs`; both are open, everything else needs a bearer token. Operations are tagged by module, every operation documents the problem responses it can return with an example `errorCode`, and the main flows (token, onboard, open account, deposit, transfer, approve) carry worked request and response examples.
+
+### Authentication and roles
+
+`POST /api/v1/auth/token` with `{"username", "password"}` checks the password against the BCrypt hash in `app_user` and returns a JWT signed with RS256 that lives for `app.security.jwt.access-token-ttl` (default 15 minutes). Every other endpoint expects `Authorization: Bearer <token>`. The token carries the username, the roles and, for a customer login, the linked customer id. There are no sessions and no cookies, so CSRF protection is off. A missing or invalid token is answered with 401 and `WWW-Authenticate: Bearer`; a valid token without the required role gets 403.
+
+| Role | May |
+|---|---|
+| `CUSTOMER` | Read its own customer record, accounts, balances and statements; send transfers from its own accounts and read them. A customer login is linked to exactly one customer id by an admin |
+| `TELLER` | Onboard customers, decide KYC, open accounts, deposit and withdraw cash, read accounts, journals and transfers |
+| `CHECKER` | Read customers, accounts, journals and transfers; list, approve and reject transfers waiting for approval |
+| `ADMIN` | Everything above, plus freeze, unfreeze and close accounts, reverse journals, manage logins, run jobs and read every actuator endpoint. An admin may decide approvals, but never one of its own transfers |
+
+Role rules sit on each controller method with `@PreAuthorize`; ownership is decided by small beans in the expression, for example `@accountAccess.isOwner(#accountId, authentication)`. An account that is not the caller's is reported as 403 whether or not it exists.
+
+### Endpoints
+
+All paths are under `/api/v1`. "staff" means `TELLER`, `CHECKER` or `ADMIN`; "owner" means a `CUSTOMER` login linked to the customer the record belongs to.
 
 | Method and path | Purpose | Roles |
 |---|---|---|
 | `POST /auth/token` | Exchange username and password for an access token | anyone |
 | `POST /customers` | Onboard a customer (full name, email, phone, date of birth); KYC starts as `PENDING` | TELLER, ADMIN |
 | `GET /customers/{id}` | Fetch a customer | staff, owner |
-| `POST /customers/{id}/kyc/verify` | Mark KYC as `VERIFIED` | TELLER, ADMIN |
-| `POST /customers/{id}/kyc/reject` | Mark KYC as `REJECTED` with a reason | TELLER, ADMIN |
+| `POST /customers/{id}/kyc/verify`, `/kyc/reject` | Decide KYC (`reason` required for a rejection) | TELLER, ADMIN |
 | `GET /customers/{id}/accounts` | List the customer's accounts | staff, owner |
 | `POST /accounts` | Open a `SAVINGS` or `CURRENT` account for a KYC-verified customer; currency defaults to `INR` | TELLER, ADMIN |
 | `GET /accounts/{id}` | Fetch an account | staff, owner |
-| `POST /accounts/{id}/freeze`, `/unfreeze` | Block or unblock an account | ADMIN |
-| `POST /accounts/{id}/close` | Close an account; allowed only when the balance is exactly zero and nothing is on hold | ADMIN |
 | `GET /accounts/{id}/balance` | Ledger balance, available balance and the amount on hold | staff, owner |
-| `GET /accounts/{id}/statement?from=&to=&cursor=&size=` | The account's ledger lines for an inclusive date range with a running balance, plus the opening and closing balance of the period; pages continue through `nextCursor` (`size` at most 200) | staff, owner |
+| `POST /accounts/{id}/freeze`, `/unfreeze` | Block or unblock an account | ADMIN |
+| `POST /accounts/{id}/close` | Close an account; only when the balance is exactly zero and nothing is on hold | ADMIN |
+| `POST /accounts/{id}/deposits`, `/withdrawals` | Teller cash operations (`amount`, `currency`, optional `remarks`); a withdrawal beyond the available balance is refused with `INSUFFICIENT_FUNDS` | TELLER, ADMIN |
+| `GET /accounts/{id}/statement?from=&to=&cursor=&size=` | Ledger lines for an inclusive date range with a running balance plus opening and closing balance; pages continue through `nextCursor` (`size` at most 200) | staff, owner |
 | `GET /accounts/{id}/statement.csv?from=&to=` | The same lines for the whole range as a streamed CSV download | staff, owner |
-| `POST /accounts/{id}/deposits` | Teller cash deposit (`amount`, `currency`, optional `remarks`) into an `ACTIVE` account | TELLER, ADMIN |
-| `POST /accounts/{id}/withdrawals` | Teller cash withdrawal; refused with `INSUFFICIENT_FUNDS` when the available balance is too low | TELLER, ADMIN |
-| `GET /journals/{id}` | A posted journal with its ledger lines | staff |
-| `POST /journals/{id}/reversal` | Correct a journal by posting the opposite legs (`reason` required); each journal can be reversed once | ADMIN |
 | `POST /transfers` | Move money between two customer accounts (`fromAccount`, `toAccount`, `amount`, `currency`, optional `remarks`); requires an `Idempotency-Key` header. 201 when posted, 202 when parked for approval | owner of `fromAccount`, ADMIN |
 | `GET /transfers/{id}` | A transfer attempt in any state: completed, failed, pending approval, rejected or expired | staff, owner of the sending account |
-| `GET /approvals?status=&page=&size=` | The approval queue, oldest first (`status` defaults to `PENDING_APPROVAL`, `size` at most 100) | CHECKER, ADMIN |
-| `POST /approvals/{transferId}/approve` | Post a pending transfer | CHECKER, ADMIN |
-| `POST /approvals/{transferId}/reject` | Refuse a pending transfer (`reason` required) and release its hold | CHECKER, ADMIN |
+| `GET /approvals?status=&page=&size=` | The approval queue, oldest first | CHECKER, ADMIN |
+| `POST /approvals/{transferId}/approve`, `/reject` | Decide a pending transfer (`reason` required for a rejection); the maker is refused with `SELF_APPROVAL_FORBIDDEN` | CHECKER, ADMIN |
+| `GET /journals/{id}` | A posted journal with its ledger lines | staff |
+| `POST /journals/{id}/reversal` | Correct a journal by posting the opposite legs (`reason` required); each journal can be reversed once | ADMIN |
 | `POST /admin/users` | Create a login (`username`, `password`, `roles`, optional `customerId` for a `CUSTOMER`) | ADMIN |
 | `GET /admin/users/{id}` | Fetch a login; the password hash is never returned | ADMIN |
 | `PUT /admin/users/{id}/customer` | Link a `CUSTOMER` login to a customer id | ADMIN |
-| `POST /admin/users/{id}/disable`, `/enable` | Block or restore a login; a disabled user cannot obtain a token | ADMIN |
-| `POST /admin/jobs/interest-accrual?date=` | Accrue savings interest for a day that has ended (and pay it out when the day is a month-end); reports how many accounts were processed, newly accrued, already accrued and posted | ADMIN |
-| `POST /admin/jobs/eod-check?date=` | Reconcile every balance row with its ledger lines and holds, every journal with its legs and the totals per currency; `date` defaults to today | ADMIN |
+| `POST /admin/users/{id}/disable`, `/enable` | Block or restore a login | ADMIN |
+| `POST /admin/jobs/interest-accrual?date=` | Accrue savings interest for a day that has ended (and pay it out on a month-end) | ADMIN |
+| `POST /admin/jobs/eod-check?date=` | Reconcile every balance, journal and the totals per currency now | ADMIN |
 
-"staff" means `TELLER`, `CHECKER` or `ADMIN`.
+Account numbers have twelve digits: a four-digit branch code, a seven-digit sequence and a Luhn check digit, so a mistyped digit is detected before any lookup. Responses and logs never contain full account numbers, phone numbers or email addresses; they are masked as `XXXXXXXX4821` and `a***@example.com`.
 
-Account numbers have twelve digits: a four-digit branch code (`app.account.branch-code`), a seven-digit sequence drawn from a database sequence and a Luhn check digit, so a mistyped digit is detected before any lookup. Responses and logs never contain full account numbers, phone numbers or email addresses; they are masked as `XXXXXXXX4821` and `a***@example.com`.
+### Error responses
 
-Business rule violations use 422 with a machine-readable code, for example `CUSTOMER_NOT_VERIFIED`, `BALANCE_NOT_ZERO`, `FUNDS_ON_HOLD`, `INSUFFICIENT_FUNDS`, `DAILY_LIMIT_EXCEEDED`, `SELF_APPROVAL_FORBIDDEN` or `CURRENCY_MISMATCH`; invalid state changes such as freezing an already frozen account, reversing a journal twice or deciding a transfer that is no longer pending use 409 (`ACCOUNT_NOT_ACTIVE`, `ACCOUNT_CLOSED`, `KYC_STATUS_UNCHANGED`, `JOURNAL_ALREADY_REVERSED`, `TRANSFER_NOT_PENDING`). A request that could not get a balance row within the lock timeout is answered with 409 `LOCK_TIMEOUT` and can be retried as it is.
-
-## Transfers
-
-`POST /api/v1/transfers` names both accounts by their full twelve-digit number, the way a customer fills in a payee form; the paths under `/accounts/{id}` stay id-based because they act on one account resource. A mistyped number fails the Luhn check and is rejected with `INVALID_ACCOUNT_NUMBER` before any lookup.
-
-Every transfer request must carry an `Idempotency-Key` header (1 to 64 letters, digits, `.`, `_`, `:` or `-`), unique per requester. The first request with a key claims it by inserting a row into `idempotency_key`, whose unique constraint on (requester, key) decides between concurrent requests. The winner performs the transfer and stores the HTTP status and JSON body it produced in the same transaction as the transfer. A later request with the same key and the same payload gets that stored response back, with the header `Idempotent-Replayed: true`; the same key with a different payload is refused with 422 `IDEMPOTENCY_KEY_REUSED`; a request that arrives while the first is still running gets 409 `REQUEST_IN_PROGRESS`. Rejections are stored and replayed too, so a retried request can never turn a refusal into a second attempt. If the first request fails unexpectedly (for example on a lock timeout) the key is released and the client retries with the same key; a key left unfinished by a crashed instance can be taken over after `app.idempotency.in-progress-timeout`.
-
-Validation is a chain of rules, each a Spring bean with an explicit order, evaluated until the first rejection: both accounts exist, they are distinct, both are `ACTIVE`, the accounts and the request share one currency, the sender's KYC is `VERIFIED`, the amount is positive and within `app.limits.per-transaction`, the sender's transfers of the current day plus this amount stay within `app.limits.daily`, and the available balance covers the amount. The rules run after both `account_balance` rows have been locked with `SELECT ... FOR UPDATE` in ascending account id order, so the balance and the daily total they see cannot change before the journal is posted, and two transfers in opposite directions between the same accounts cannot deadlock. The transaction runs at READ COMMITTED with `SET LOCAL lock_timeout` (`app.ledger.lock-timeout`), so a request never waits indefinitely for a row held by another transaction.
-
-A completed transfer is a `TRANSFER` journal (debit sender, credit beneficiary) plus a row in `transfer` with status `COMPLETED` and a reference such as `TRF-0000000012`. A transfer the rules rejected is still written, in a separate transaction after the rollback, as a `FAILED` row carrying the error code; the 422 response includes its `transferId` and `transferReference`, and `GET /api/v1/transfers/{id}` shows it. A transfer above the approval threshold passes the same rules and is then parked instead of posted, as described next.
-
-## Maker-checker and holds
-
-A transfer whose amount is above `app.approval.threshold` (default 200000.00) is not posted by the person who raised it. It is saved as `PENDING_APPROVAL`, answered with 202 and a `Location`, and a **hold** for the amount is placed on the sender's account in the same transaction, under the same row lock the rules ran on. The hold lowers the account's *available* balance but not its *ledger* balance: the money is still the customer's and still on the books, it just cannot be spent twice while a checker decides. `GET /accounts/{id}/balance` shows all three figures (`ledgerBalance`, `availableBalance`, `onHold`), the balance rule of the next transfer sees the reduced available balance, a teller withdrawal is checked against it too, and an account with an active hold cannot be closed (`FUNDS_ON_HOLD`).
-
-A `CHECKER` (or an admin) lists the queue with `GET /approvals` and decides with `POST /approvals/{transferId}/approve` or `/reject`. The four-eyes rule is enforced on the server: the user who raised the transfer cannot decide it, whatever roles they hold, and gets 422 `SELF_APPROVAL_FORBIDDEN`. Approval locks the transfer row, then the two balance rows in ascending account id, captures the hold and posts the `TRANSFER` journal in one transaction, so afterwards the balances are exactly what a direct transfer would have produced; the journal's `createdBy` is the checker, the transfer's `decidedBy` as well. Rejection releases the hold and records the reason as `decisionReason`; the transfer ends `REJECTED`. A decision on a transfer that is no longer pending is answered with 409 `TRANSFER_NOT_PENDING`, which is also what the loser of two simultaneous decisions gets, because both first lock the transfer row. A pending transfer whose sender has been frozen in the meantime cannot be approved (409 `ACCOUNT_NOT_ACTIVE`) and stays in the queue until it is rejected, the account is unfrozen or it expires.
-
-The idempotency row of the original request keeps the 202 response it produced, so a retry of the same `Idempotency-Key` still returns `PENDING_APPROVAL` after the decision; the current state is on `GET /transfers/{id}`.
-
-Pending transfers that nobody decides within `app.approval.pending-expiry` (default 24h) are expired by a scheduled sweep (`app.approval.expiry-cron`, default every minute): each one is handled in its own transaction with the same locks as a decision, its hold is released, the transfer ends `EXPIRED` with `decidedBy` `system`, and an audit row is written. The sweep is idempotent and works in batches of 100.
-
-## Statements
-
-`GET /api/v1/accounts/{id}/statement?from=2026-10-01&to=2026-10-31` returns the account's ledger lines for an inclusive date range, oldest first, each with the journal reference, type and description, the counterparty (another customer's account, masked, or one of the bank's own accounts such as `CASH_VAULT`) and the balance after the line. The response also carries the opening balance (everything posted before `from`) and the closing balance of the period. The running balance is computed by PostgreSQL with a window function, `SUM(signed_amount) OVER (ORDER BY posted_at, id)`, where a credit counts positive and a debit negative because a customer's balance is what the bank owes them. Days are interpreted in the application's time zone (`UTC` unless the clock is configured otherwise).
-
-Pages use keyset pagination instead of `OFFSET`: the response contains an opaque `nextCursor` (null on the last page) that encodes the position of the last line returned, and the next page continues strictly after that position. Lines posted after the first page was fetched appear at the end, so a client walking the pages never sees a line twice or misses one that was already there, which `OFFSET` cannot promise on a table that keeps growing; and the database never scans and discards the rows of earlier pages. The running balance of a page that starts in the middle of the period is still right because the window runs over the whole period and the cursor is applied outside it. `size` defaults to 50 and is at most 200; `from` must not be after `to` and the range may not exceed `app.statement.max-period`; a cursor that was not issued by a previous page is rejected. All three are 400 responses (`INVALID_PERIOD`, `PERIOD_TOO_LONG`, `INVALID_CURSOR`).
-
-`GET /api/v1/accounts/{id}/statement.csv?from=&to=` streams the same lines as a CSV attachment (`posted_at, journal_reference, type, description, counterparty, debit, credit, balance, currency`). The rows are read through a JDBC cursor with a fetch size of 500 inside a read-only transaction that stays open until the last row is written, and are passed to the response as they arrive, so the memory needed does not grow with the length of the statement. Both endpoints read at `REPEATABLE READ`, so the balances and the lines of one response come from the same snapshot of the ledger. `ledger_entry` carries a copy of its journal's `posted_at`, kept consistent by a composite foreign key, and an index on `(account_id, posted_at, id)` serves the date range, the ordering and the cursor of these queries. Every view and every download is written to the audit log.
-
-## Interest
-
-Savings accounts earn interest daily and receive it monthly, which is how most banks do it: the daily figure is what the bank owes for one more day of holding the money, the monthly credit is when that debt is paid. Every night (`app.interest.accrual-cron`, default 00:30) the accrual job takes each savings account that is not closed, computes the balance it held at the end of the previous day from its ledger lines (`posted_at` before the next midnight in the application's time zone), and writes one `interest_accrual` row with that balance, the annual rate in force (`app.interest.savings-annual-rate`), and the day's interest: balance x rate / 365, rounded `HALF_EVEN` to four decimals. Four decimals rather than two because a small balance earns fractions of a paisa a day and a month of them must add up before anything is rounded to money. The arithmetic is done in Java rather than SQL because PostgreSQL's `round()` rounds half up and the ledger's rule is half even. The rate is copied onto each row, so changing the configuration later changes future accruals only. A frozen account keeps accruing: a freeze stops the customer from transacting, not the bank from owing interest. Current accounts earn nothing.
-
-The table has a unique key on (account, date) and the job inserts with `ON CONFLICT DO NOTHING`, so running a day twice, or two instances running it at once, cannot accrue twice; a repeated run reports the accounts as already accrued. A day can be accrued only once it has ended, because the balance of a running day is not final. Because the balance is read from the ledger lines as of the end of the accrual date and not from the balance row, a run that happens late, after further deposits, still produces the right figure.
-
-On the last day of a month the same run also pays out: for each account with accrual rows not yet posted, it locks those rows, sums them, rounds the sum `HALF_EVEN` to two decimals and posts one `INTEREST` journal through `PostingService`, debiting the bank's `INTEREST_EXPENSE` account and crediting the customer, then stamps the rows with the journal id. The rows are selected by "not yet posted" rather than by month, so a sum below one paisa is carried forward instead of being lost, and a month-end that was missed is caught up by the next one. A re-run finds no unposted rows and posts nothing. Each account is posted in its own transaction, so one account whose balance row is locked does not hold up the rest; the interest journal reaches Kafka through the outbox like every other posting.
-
-## End-of-day check
-
-The balance rows in `account_balance` are a copy of what the ledger lines say, maintained inside the posting transaction. The end-of-day check is the independent proof that the copy is still right and that nothing reached the ledger tables behind the posting service's back. It runs nightly (`app.ledger.eod-check-cron`, default 01:00, after the accrual) and on demand through `POST /api/v1/admin/jobs/eod-check`, and verifies three things in one `REPEATABLE READ` snapshot, so a posting that commits during the check cannot appear as a false difference between two queries: for every account, `ledger_balance` equals the signed sum of its ledger lines and `available_balance` equals `ledger_balance` minus its active holds; every journal has at least two legs whose debits equal its credits; and, per currency, the sum of all debits ever posted equals the sum of all credits.
-
-Each discrepancy is reported three ways: an `ERROR` log line with the masked account number or the journal reference, an increment of the Micrometer counter `ledger.eod.mismatches` (tagged `type` = `balance`, `journal` or `totals`, visible on `/actuator/prometheus`), and an `audit_log` row with outcome `FAILURE` naming the account or journal and the expected and actual figures. The scheduled run adds a summary row (`EOD_CHECK`, `SUCCESS` or `FAILURE`, with the counts) under the business date it closed; an administrator's run is recorded by the audit aspect with the same counts. The report lists at most 100 offenders of each kind alongside the full counts.
-
-## Scheduled jobs
-
-Jobs are plain `@Scheduled` methods guarded by ShedLock's `@SchedulerLock`, with the JDBC lock provider and the `shedlock` table. When several instances of the application share the database, each schedule still fires once: the instance that claims the lock row runs the job, the others skip that run. Lock expiry uses the database clock, so instances with drifting clocks cannot both hold a lock. `app.scheduling.enabled=false` turns the schedules off for an instance; the job beans remain and are called directly by the tests.
-
-| Job | Lock name | Default schedule | What it does |
-|---|---|---|---|
-| Pending transfer expiry | `expirePendingTransfers` | every minute | Releases the holds of pending transfers nobody decided in time |
-| Outbox relay | `relayOutbox` | every second | Publishes outbox rows to Kafka |
-| Interest accrual | `accrueInterest` | 00:30 daily | Accrues the previous day and, at a month-end, posts the interest |
-| End-of-day check | `checkEndOfDay` | 01:00 daily | Reconciles balances, journals and totals for the previous business day |
-| Outbox purge | `purgeOutbox` | 02:00 daily | Deletes published outbox rows older than `app.outbox.retention` (default 7 days), in slices of 1 000; unpublished rows are never deleted |
-
-Every job is safe to run twice: the expiry re-checks each transfer under its lock, the relay stamps rows it has published, the accrual relies on a unique key, the payout takes only rows no journal has claimed, the check only reads, and the purge only removes what is already gone from the topic's point of view. Scheduled runs write their audit rows as `system`; the two jobs that can be triggered by an administrator are audited under that person's name.
-
-## Events
-
-Every journal that `PostingService` posts (deposit, withdrawal, transfer, approved transfer, reversal) is published to the Kafka topic `ledger.transactions.v1` as a `LedgerTransactionPosted` event, version 1: one event per customer account the journal touched, keyed by that account's id, carrying the journal id, reference and type, the posting time, the direction and amount for that account, the masked account number, and every leg of the journal (customer legs by id with a masked number, bank legs by GL code). The payload is JSON with an explicit `schemaVersion`.
-
-The event is not sent from the posting code. It is written as a row of the `outbox_event` table inside the posting transaction (a synchronous listener on the `JournalPosted` application event, which runs with `Propagation.MANDATORY`), so a journal and its events are committed or rolled back together; writing to the database and to Kafka from the same code path could leave one without the other. A relay scheduled every `app.outbox.relay-delay` (and guarded by ShedLock, so one instance at a time) selects unpublished rows in batches with `SELECT ... FOR UPDATE SKIP LOCKED`, oldest first, sends each to Kafka, waits for the broker's acknowledgement (`acks=all`, idempotent producer) and stamps `published_at` in the same database transaction. A row whose publish fails keeps a count of attempts and the last error and is retried on the next run; later rows of the same account wait behind it, so the order of one account's events on its partition is always the posting order. If the relay dies between the acknowledgement and the commit the row is published again: delivery is at least once, and consumers must tolerate a duplicate.
-
-The notification consumer in the same application (`@KafkaListener`, consumer group `app.notification.group-id`, offsets committed per record) parses each record, refuses anything that is not a version-1 event, and writes one simulated message per event: an SMS to the masked phone number for a debit, an email to the masked address for a credit, both as rows of the `notification` table. Before it writes, it inserts the event id into `processed_event` (`ON CONFLICT DO NOTHING`) in the same transaction; a redelivered event finds its id there and is skipped, which makes the consumer idempotent. A record that fails for a reason that may pass (the database is briefly unavailable) is retried `app.notification.retry-attempts` times with a fixed backoff; a record that can never be processed (not JSON, an unknown schema version, an account that does not exist) and a record whose retries are exhausted are republished to `ledger.transactions.v1.DLT` with the original key, value and headers plus the exception details, and the consumer continues. Both topics are declared by the application with `app.outbox.topic-partitions` partitions.
-
-## Ledger
-
-Money moves only through `PostingService`, which records every business event (`DEPOSIT`, `WITHDRAWAL`, `TRANSFER`, `INTEREST`, `REVERSAL`) as a journal with two or more ledger lines. Each line debits or credits either a customer account or one of the bank's general ledger accounts (`CASH_VAULT`, `INTEREST_EXPENSE`, `SUSPENSE`). A journal is accepted only when all its lines are in one currency and the debits equal the credits; the journal, its lines and the affected balances are then written in a single transaction, with the balance rows locked in ascending account id order.
-
-A cash deposit debits `CASH_VAULT` and credits the customer account; a withdrawal does the opposite and is refused when the available balance is lower than the amount. Customer balances are stored in `account_balance` (ledger balance and available balance, which differ only when money is on hold) and must always agree with the sum of the account's ledger lines.
-
-`journal_entry` and `ledger_entry` are append-only: database triggers reject any `UPDATE`, `DELETE` or `TRUNCATE`. A mistake is corrected with `POST /api/v1/journals/{id}/reversal`, which posts a new journal with every leg flipped and linked to the original through `reversal_of`; a unique constraint on that column guarantees a journal is reversed at most once even under concurrent requests.
-
-## Error responses
-
-Errors are returned as RFC 9457 `application/problem+json` documents. Every body carries a machine-readable `errorCode` and the `correlationId` of the request, which is also returned in the `X-Correlation-Id` response header and printed in every log line for that request. Send your own `X-Correlation-Id` to have it reused; otherwise one is generated.
+Errors are RFC 9457 `application/problem+json` documents. Every body carries a machine-readable `errorCode` and the `correlationId` of the request, which is also returned in the `X-Correlation-Id` response header and printed in every log line of that request; send your own `X-Correlation-Id` to have it reused.
 
 ```json
 {
   "type": "about:blank",
   "title": "Unprocessable Entity",
   "status": 422,
-  "detail": "Available balance is lower than the transfer amount",
+  "detail": "Available balance 1000.00 is lower than 2500.00",
   "instance": "/api/v1/transfers",
   "errorCode": "INSUFFICIENT_FUNDS",
   "correlationId": "7c1e9a5c-1a2b-4d3e-9f10-2b3c4d5e6f70"
 }
 ```
 
-Validation failures (400) add an `errors` array of `{ "field", "message" }` entries; other malformed requests use 400 with a specific code such as `IDEMPOTENCY_KEY_REQUIRED`, `INVALID_PERIOD`, `PERIOD_TOO_LONG` or `INVALID_CURSOR`. Authentication failures use 401 (`AUTHENTICATION_REQUIRED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS`, `USER_DISABLED`), authorisation failures 403 (`ACCESS_DENIED`) and the transfer rate limit 429 (`RATE_LIMIT_EXCEEDED`). Unexpected failures return 500 with a generic message and no internal details.
+| Status | Meaning | Example codes |
+|---|---|---|
+| 400 | Malformed request or validation failure (`errors` lists the fields) | `VALIDATION_FAILED`, `IDEMPOTENCY_KEY_REQUIRED`, `INVALID_PERIOD`, `INVALID_CURSOR` |
+| 401 | No, expired or invalid token; wrong credentials | `AUTHENTICATION_REQUIRED`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS`, `USER_DISABLED` |
+| 403 | Role or ownership does not allow the call | `ACCESS_DENIED` |
+| 404 | Unknown identifier | `RESOURCE_NOT_FOUND` |
+| 409 | The resource is in a state that forbids the change, or a concurrent request won | `TRANSFER_NOT_PENDING`, `JOURNAL_ALREADY_REVERSED`, `KYC_STATUS_UNCHANGED`, `LOCK_TIMEOUT`, `REQUEST_IN_PROGRESS` |
+| 422 | A business rule refused the request | `INSUFFICIENT_FUNDS`, `DAILY_LIMIT_EXCEEDED`, `CUSTOMER_NOT_VERIFIED`, `SELF_APPROVAL_FORBIDDEN`, `IDEMPOTENCY_KEY_REUSED` |
+| 429 | Transfer rate limit per user exceeded; `Retry-After` says when to retry | `RATE_LIMIT_EXCEEDED` |
+
+## How it works
+
+### Ledger
+
+Money moves only through `PostingService`, which records every business event (`DEPOSIT`, `WITHDRAWAL`, `TRANSFER`, `INTEREST`, `REVERSAL`) as a journal with two or more ledger lines, each debiting or crediting a customer account or one of the bank's general-ledger accounts. A journal is accepted only when all its lines share one currency and the debits equal the credits; the journal, its lines and the affected balance rows are written in a single transaction with the balance rows locked in ascending account id order. A cash deposit debits `CASH_VAULT` and credits the customer; a withdrawal does the opposite and is refused when the available balance is lower than the amount. `account_balance` holds the ledger balance and the available balance per account, which differ only by the active holds, and must always agree with the sum of the account's lines.
+
+### Transfers
+
+Every transfer request carries an `Idempotency-Key` (1 to 64 letters, digits, `.`, `_`, `:` or `-`), unique per requester. The first request with a key claims it by inserting a row; the winner performs the transfer and stores the HTTP status and body it produced in the same transaction. A later request with the same key and payload gets that response back with `Idempotent-Replayed: true`; the same key with a different payload is refused with 422 `IDEMPOTENCY_KEY_REUSED`; a request that arrives while the first is still running gets 409 `REQUEST_IN_PROGRESS`. Rejections are stored and replayed too, so a retry can never turn a refusal into a second attempt.
+
+Validation is a chain of rule beans with an explicit order, evaluated until the first rejection: both accounts exist and are distinct, both are `ACTIVE`, the accounts and the request share one currency, the sender's KYC is `VERIFIED`, the amount is positive and within `app.limits.per-transaction`, the sender's transfers of the day plus this amount stay within `app.limits.daily`, and the available balance covers the amount. The rules run after both balance rows are locked, so what they see cannot change before the journal is posted. A transfer the rules rejected is still written, in a separate transaction after the rollback, as a `FAILED` row carrying the error code. `POST /api/v1/transfers` is limited per user to `app.security.rate-limit.transfers-per-minute` (default 20) with an in-memory token bucket.
+
+### Maker-checker and holds
+
+A transfer above `app.approval.threshold` (default 200000.00) is saved as `PENDING_APPROVAL`, answered with 202, and a hold for the amount is placed on the sender under the same row lock. The hold lowers the available balance but not the ledger balance: the money is still the customer's and still on the books, it just cannot be spent twice while a checker decides. Approval locks the transfer row, then the two balance rows, captures the hold and posts the journal in one transaction; rejection releases the hold and records the reason. The loser of two simultaneous decisions gets 409 `TRANSFER_NOT_PENDING`. Pending transfers nobody decides within `app.approval.pending-expiry` (default 24h) are expired by a scheduled sweep that releases their holds and writes an audit row.
+
+### Statements
+
+The statement query computes the running balance in PostgreSQL with `SUM(signed_amount) OVER (ORDER BY posted_at, id)` over the whole period and applies the keyset predicate outside the window, so a page that starts in the middle of the period still shows the right balances. `ledger_entry` carries a copy of its journal's `posted_at`, kept consistent by a composite foreign key, and an index on `(account_id, posted_at, id)` serves the range, the order and the cursor. In the volume test (100 000 journals, 200 000 lines) `EXPLAIN (ANALYZE, BUFFERS)` showed a one-month page going from 25.5 ms and 4 833 buffers with hash joins over the whole account and a sequential scan of `journal_entry` to 4 to 5 ms and 1 071 buffers served by that index. Both statement endpoints read at `REPEATABLE READ`, so the balances and the lines of one response come from the same snapshot; the CSV is streamed through a JDBC cursor with a fetch size of 500 inside a read-only transaction, so memory does not grow with the length of the statement.
+
+### Events
+
+Every posted journal becomes one `LedgerTransactionPosted` event per customer account it touched, keyed by that account's id so one account's events stay ordered on their partition, with an explicit `schemaVersion`. The outbox row is written by a synchronous listener on the `JournalPosted` application event that runs with `Propagation.MANDATORY`, so it is impossible to write it outside the posting transaction. The relay (`app.outbox.relay-delay`, default every second, under ShedLock) selects unpublished rows oldest first with `FOR UPDATE SKIP LOCKED`, sends each with `acks=all` and an idempotent producer, and stamps `published_at` in the same database transaction; a row whose publish fails records the attempt and holds back later rows of the same account only. The notification consumer in the same application writes one simulated SMS (debit) or email (credit) per event to `notification`, after inserting the event id into `processed_event` in the same transaction, which makes a redelivery a no-op. Retryable failures are retried with a fixed backoff; a record that can never be processed and a record whose retries are exhausted are republished to `ledger.transactions.v1.DLT` with their original key, value and headers.
+
+### Interest and end-of-day check
+
+Every night (`app.interest.accrual-cron`, default 00:30) the accrual job computes, for each open savings account, the balance it held at the end of the previous day from its ledger lines and writes one `interest_accrual` row with that balance, the rate in force and the day's interest, balance x rate / 365 rounded `HALF_EVEN` to four decimals; the unique key on `(account, date)` and `ON CONFLICT DO NOTHING` make a re-run harmless. On the last day of a month the run also sums the unposted accruals per account, rounds to two decimals and posts one `INTEREST` journal from `INTEREST_EXPENSE`, carrying anything below one paisa forward. The end-of-day check (`app.ledger.eod-check-cron`, default 01:00, or on demand) verifies in one `REPEATABLE READ` snapshot that every balance row equals the signed sum of its lines minus its holds, that every journal balances, and that all debits equal all credits per currency; each discrepancy is an `ERROR` log line with masked identifiers, an increment of `ledger.eod.mismatches`, and an audit row.
+
+### Audit trail
+
+Every money movement, approval decision, statement view or download and administrative action writes a row to `audit_log`: actor, roles, action, target, outcome `SUCCESS` or `FAILURE`, the error code of a failure, client IP, correlation id, timestamp and a JSON `details` column with the business values of the request (amounts, masked account numbers, reasons; never passwords or full numbers). The controller methods are marked `@Audited` and an aspect writes the row after the method has returned or thrown, in its own transaction, so a refused withdrawal or a forbidden freeze is on record like a successful one. Scheduled jobs write their rows as `system`.
+
+### Scheduled jobs
+
+Jobs are `@Scheduled` methods guarded by ShedLock's `@SchedulerLock` with the JDBC lock provider, so each schedule fires once however many instances share the database. `app.scheduling.enabled=false` turns the schedules off for an instance that should only serve requests.
+
+| Job | Default schedule | What it does |
+|---|---|---|
+| Pending transfer expiry | every minute | Releases the holds of pending transfers nobody decided in time |
+| Outbox relay | every second | Publishes outbox rows to Kafka |
+| Interest accrual | 00:30 daily | Accrues the previous day and, at a month-end, posts the interest |
+| End-of-day check | 01:00 daily | Reconciles balances, journals and totals |
+| Outbox purge | 02:00 daily | Deletes published outbox rows older than `app.outbox.retention` (default 7 days) |
 
 ## Observability
 
-Every request carries a correlation id (`X-Correlation-Id`, generated when the caller sends none) that appears in every log line of the request, in every error body and in the audit row. In the `prod` profile log lines are JSON in the Elastic Common Schema (`logging.structured.format.console: ecs`) with the correlation id as a top-level field; `dev` and `test` keep a readable pattern with the id in brackets.
+Every request carries a correlation id (`X-Correlation-Id`, generated when the caller sends none) that appears in every log line of the request, in every error body and in the audit row. In the `prod` profile log lines are JSON in the Elastic Common Schema with the correlation id as a field; `dev` and `test` keep a readable pattern.
 
 | Endpoint | Who | Content |
 |---|---|---|
-| `GET /actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | anyone | `UP` or `DOWN`. An ADMIN token also sees the `db` and `kafka` components with their details. Readiness includes the database and the Kafka cluster; liveness only the process itself |
+| `GET /actuator/health`, `/health/liveness`, `/health/readiness` | anyone | `UP` or `DOWN`; an ADMIN token also sees the `db` and `kafka` components. Readiness includes the database and the Kafka cluster, liveness only the process |
 | `GET /actuator/info` | anyone | Build coordinates: artifact, group, version, build time |
 | `GET /actuator/prometheus` | ADMIN | Prometheus scrape |
 | anything else under `/actuator` | ADMIN | Not exposed, answers 404 |
 
-Application metrics, registered with Micrometer next to the JVM, HikariCP, Tomcat, Kafka client and HTTP server meters Spring Boot provides:
-
 | Metric | Type | Meaning |
 |---|---|---|
 | `transfers.completed` | counter | Transfers posted to the ledger, directly or after approval |
-| `transfers.failed{errorCode}` | counter | Transfers refused by a rule, by the error code the client received; every code is an enum constant, so the set of series is closed |
-| `transfers.latency{outcome}` | timer with histogram | Time to answer a transfer request, from the idempotency claim to the response; `outcome` is `completed`, `pending_approval`, `replayed`, `rejected` or `error` |
-| `outbox.lag` | gauge, seconds | Age of the oldest outbox event not yet acknowledged by Kafka, 0 when none is waiting; read from the table on each scrape, so it is right even when the relay is down |
+| `transfers.failed{errorCode}` | counter | Transfers refused by a rule, by error code |
+| `transfers.latency{outcome}` | timer with histogram | Time to answer a transfer request, by `completed`, `pending_approval`, `replayed`, `rejected` or `error` |
+| `outbox.lag` | gauge, seconds | Age of the oldest outbox event not yet acknowledged by Kafka |
 | `outbox.unpublished` | gauge | Outbox events waiting to be published |
-| `notifications.sent{channel}` | counter | Notifications recorded for customers, `SMS` or `EMAIL` |
-| `notifications.dead.lettered` | counter | Records the notification consumer parked on the dead-letter topic |
+| `notifications.sent{channel}` | counter | Notifications recorded, `SMS` or `EMAIL` |
+| `notifications.dead.lettered` | counter | Records parked on the dead-letter topic |
 | `ledger.eod.mismatches{type}` | counter | Discrepancies found by the end-of-day check (`balance`, `journal`, `totals`) |
 
-Module boundaries are checked on every build. `ArchitectureTests` (ArchUnit) requires that feature packages form no cycles, that `common` and `security` depend on no feature, that controllers reach no repository, `JdbcClient` or `EntityManager`, that only the `ledger` package uses the journal, balance and hold repositories, creates journals, legs, balances and holds, or changes a balance, that nothing outside controllers, `common.web`, `common.error` and the security handlers depends on the web layer, that every `@Scheduled` method carries `@SchedulerLock`, and that every error code is an enum. `LedgerTableWritesTests` scans the sources for SQL that writes `journal_entry` or `ledger_entry` anywhere, or `account_balance` or `hold` outside the `ledger` package, which bytecode rules cannot see.
+## Configuration
+
+Settings live under the `app.*` prefix, bound to validated `@ConfigurationProperties` records, so an invalid value stops the application at start-up instead of failing later. Each maps to an environment variable listed in `.env.example`.
+
+| Prefix | Purpose |
+|---|---|
+| `app.account` | Branch code used in account numbers and the default account currency |
+| `app.ledger` | Lock timeout for every transaction that locks balance rows, and the cron of the end-of-day check |
+| `app.idempotency` | How long an unfinished `Idempotency-Key` may block before a retry takes it over |
+| `app.limits` | Per-transaction and daily transfer limits |
+| `app.approval` | Maker-checker threshold, pending-transfer expiry and the cron of the expiry sweep |
+| `app.statement` | The longest period one statement request may cover (default one year) |
+| `app.outbox` | Relay delay and batch size, publish acknowledgement timeout, topic partitions and replication factor, retention and purge cron |
+| `app.notification` | Consumer group, retry attempts and backoff before a record is dead-lettered |
+| `app.interest` | Annual savings rate and the accrual cron |
+| `app.security` | JWT issuer, access token lifetime, the RSA key pair, and the transfer rate limit |
+| `app.scheduling` | Master switch for every schedule |
 
 ## Tests
 
@@ -227,6 +328,17 @@ Module boundaries are checked on every build. `ArchitectureTests` (ArchUnit) req
 ./mvnw clean verify
 ```
 
-The build writes a JaCoCo report to `target/site/jacoco/index.html` and fails if line coverage drops below 95 %. On the current code the report shows 98.59 % of lines, 97.98 % of instructions and 86.13 % of branches covered by 705 tests; request and response records, configuration classes, the generated MapStruct mappers and the main class are excluded from the measurement.
+Integration tests start PostgreSQL and Kafka in Testcontainers on random ports, so Docker must be running. The build writes a JaCoCo report to `target/site/jacoco/index.html` and fails if line coverage drops below 95 %. On the current code the report shows 98.53 % of lines, 97.95 % of instructions and 86.28 % of branches covered by 711 tests; request and response records, configuration classes, the generated MapStruct mappers and the main class are excluded from the measurement.
 
-Integration tests start PostgreSQL and Kafka in Testcontainers containers on random ports, so Docker must be running. The security tests obtain real tokens from the token endpoint and run every endpoint against an anonymous caller and each of the four roles, check that a customer is refused on another customer's accounts and transfers, that expired and tampered tokens are rejected, and that audit rows are written for successful, refused and denied attempts and cannot be updated or deleted. They include an invariant test that runs a random sequence of deposits, withdrawals and reversals and then checks, with SQL, that every journal balances, that each account balance equals the sum of its ledger lines and that the cash in the vault equals what the bank owes its customers. The transfer tests run 100 concurrent transfers between two accounts and check that the total is conserved, run transfers in both directions at once to show the lock ordering prevents deadlocks, race 50 transfers for a balance that covers ten of them and expect exactly ten to succeed, send concurrent requests with one `Idempotency-Key` and expect a single transfer, and hold a balance row from another transaction to show the lock timeout fires with SQLSTATE `55P03` and that the retry then succeeds. The approval tests cover the 202 and the hold, a second transfer refused because held money is not available, the maker refused as checker, the approve, reject and expiry flows with their balances, hold states, journals and audit rows, a concurrent approve and reject that end in exactly one outcome, the ShedLock row taken by the scheduled run, closure refused while a hold is active, and a SQL check that for every account the gap between ledger and available balance equals the sum of its active holds. The statement tests compare the running balance across pages with an in-memory computation over the same postings, check the opening and closing balance of a period that starts in the middle of an account's history, post further entries after a first page was fetched and verify that the following pages neither shift nor repeat, reject malformed cursors and periods, check the CSV header and rows, and load 100 000 balanced journals (200 000 ledger lines) through one SQL statement to verify with `EXPLAIN (ANALYZE, BUFFERS)` that a statement page is served by the `(account_id, posted_at, id)` index and that a year of lines streams completely as CSV. The event tests run against the Kafka container: a transfer leaves one outbox row per account and, once relayed, one notification per account; a deposit inside a transaction that rolls back leaves no outbox row, a transfer the rules refuse leaves none either, and the outbox writer refuses to run without a transaction; the relay publishes nothing twice and takes the ShedLock row; a relay whose broker rejects every send records the attempt and the error and the next run publishes the rows; a failed event holds back later events of the same account only; six transfers on one account produce notifications in posting order; the same event delivered twice produces one notification and one `processed_event` row; and malformed JSON, an unknown schema version and an unknown account each end up in the dead-letter topic with their original headers while the consumer keeps processing. The interest tests move the fixed clock forward to accrue known balances and check the stored four-decimal amounts (including the half-way cases that separate `HALF_EVEN` from half-up), that a late run uses the balance of the accrual date rather than the current one, that a repeated day inserts nothing, that a month-end posts one `INTEREST` journal with the rounded sum and a re-run posts nothing more, that interest below one paisa is carried forward, and that current and closed accounts are skipped while frozen ones accrue. The end-of-day tests pass on a healthy ledger, then corrupt a balance row directly and insert a one-sided ledger line inside a transaction that is rolled back, and verify the report, the `ERROR` lines with masked numbers, the counter increments and the audit rows; the purge tests show that only published rows older than the retention disappear; and each scheduled entry point is called once to show it takes its ShedLock row. An end-to-end test walks a customer's first day with a real token per role, from onboarding through a deposit, a transfer, a high-value transfer approved by a checker and the statement, to the notifications the Kafka consumer records. The actuator tests check who may see the health details, the build info and the Prometheus scrape, and that the scrape carries the application metrics; the structured logging test runs Spring Boot's ECS encoder against an event with the correlation id in the MDC and parses the JSON it writes.
+What the tests cover, by area:
+
+- **Ledger invariants.** An unbalanced journal is rejected; the triggers block `UPDATE` and `DELETE` on the ledger tables and on `audit_log`; a reversal restores balances; a random sequence of deposits, withdrawals and reversals leaves every journal balanced, every balance equal to the sum of its lines and the vault equal to what the bank owes its customers.
+- **Concurrency.** 100 concurrent transfers between two accounts conserve the total; transfers in both directions at once finish without deadlock; 50 transfers racing for a balance that covers ten leave exactly ten completed; concurrent requests with one `Idempotency-Key` produce one transfer; a balance row held by another transaction makes the lock timeout fire (SQLSTATE `55P03`) and the retry succeed; a concurrent approve and reject end in exactly one outcome.
+- **Security.** Every endpoint is run against an anonymous caller and each of the four roles with real tokens; a customer is refused on another customer's accounts and transfers; expired, tampered and foreign-issuer tokens are rejected; audit rows are written for successful, refused and denied attempts.
+- **Statements.** Running balances across pages match an in-memory computation; pages fetched after new postings neither shift nor repeat; malformed cursors and periods are rejected; the CSV header and rows are checked; a 200 000-line volume test checks the index with `EXPLAIN (ANALYZE, BUFFERS)` and streams a year of lines.
+- **Events.** A transfer leaves one outbox row per account and one notification per account; a rolled-back posting leaves no outbox row; the relay publishes nothing twice; a failed event holds back later events of the same account only; a duplicate delivery produces one notification; malformed JSON, an unknown schema version and an unknown account end up in the dead-letter topic.
+- **Jobs.** Interest for known balances and rates with the fixed clock, including the half-way cases that separate `HALF_EVEN` from half-up; idempotent re-runs; the month-end posting; the end-of-day check catching a corrupted balance and a one-sided line; every scheduled entry point taking its ShedLock row.
+- **Architecture and contract.** ArchUnit rules on package cycles, controller access to repositories, the ledger write path and `@SchedulerLock` on every schedule; a source scan for SQL against the ledger tables; the OpenAPI document's security scheme, tags, summaries, required `Idempotency-Key` and error examples; the ECS log encoder output.
+- **End to end.** One test walks a customer's first day with a real token per role: onboarding, KYC, two accounts, a deposit, a transfer, a high-value transfer approved by a checker, the statement, and the notifications the Kafka consumer records.
+
+CI runs `./mvnw -B clean verify` on every push and pull request, uploads the JaCoCo report as a build artifact, and builds the Docker image with BuildKit (without pushing it).

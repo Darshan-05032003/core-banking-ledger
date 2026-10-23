@@ -44,6 +44,9 @@ management:
         readiness:
           include: readinessState,db,kafka
 
+springdoc:
+  default-produces-media-type: application/json
+
 logging:
   pattern:
     correlation: "[%X{correlationId:-}] "
