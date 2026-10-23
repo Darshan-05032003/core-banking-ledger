@@ -58,7 +58,9 @@ class ApplicationPropertiesTests {
             assertThat(security.jwt().hasConfiguredKeys()).isFalse();
             assertThat(security.rateLimit().transfersPerMinute()).isEqualTo(20);
 
-            assertThat(context.getBean(LedgerProperties.class).lockTimeout()).isEqualTo(Duration.ofSeconds(3));
+            LedgerProperties ledger = context.getBean(LedgerProperties.class);
+            assertThat(ledger.lockTimeout()).isEqualTo(Duration.ofSeconds(3));
+            assertThat(ledger.eodCheckCron()).isEqualTo("0 0 1 * * *");
             assertThat(context.getBean(StatementProperties.class).maxPeriod()).isEqualTo(Period.ofYears(1));
             assertThat(context.getBean(IdempotencyProperties.class).inProgressTimeout())
                     .isEqualTo(Duration.ofMinutes(2));
@@ -104,6 +106,7 @@ class ApplicationPropertiesTests {
             "app.security.jwt.private-key=-----BEGIN PRIVATE KEY-----",
             "app.security.rate-limit.transfers-per-minute=0",
             "app.ledger.lock-timeout=0s",
+            "app.ledger.eod-check-cron=nightly",
             "app.idempotency.in-progress-timeout=-1m",
             "app.statement.max-period=0d",
             "app.statement.max-period=-6m",

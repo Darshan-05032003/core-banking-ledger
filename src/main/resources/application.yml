@@ -47,6 +47,7 @@ app:
     default-currency: ${APP_ACCOUNT_DEFAULT_CURRENCY:INR}
   ledger:
     lock-timeout: ${APP_LEDGER_LOCK_TIMEOUT:3s}
+    eod-check-cron: ${APP_LEDGER_EOD_CHECK_CRON:0 0 1 * * *}
   idempotency:
     in-progress-timeout: ${APP_IDEMPOTENCY_IN_PROGRESS_TIMEOUT:2m}
   limits:

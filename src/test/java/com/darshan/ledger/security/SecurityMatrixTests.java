@@ -96,7 +96,9 @@ class SecurityMatrixTests {
                 new Endpoint(HttpMethod.GET, "/api/v1/admin/users/999999", null, ADMIN_ONLY),
                 new Endpoint(HttpMethod.PUT, "/api/v1/admin/users/999999/customer", "{\"customerId\":1}", ADMIN_ONLY),
                 new Endpoint(HttpMethod.POST, "/api/v1/admin/users/999999/disable", null, ADMIN_ONLY),
-                new Endpoint(HttpMethod.POST, "/api/v1/admin/users/999999/enable", null, ADMIN_ONLY));
+                new Endpoint(HttpMethod.POST, "/api/v1/admin/users/999999/enable", null, ADMIN_ONLY),
+                new Endpoint(HttpMethod.POST, "/api/v1/admin/jobs/interest-accrual?date=2026-10-21", null, ADMIN_ONLY),
+                new Endpoint(HttpMethod.POST, "/api/v1/admin/jobs/eod-check?date=2026-10-22", null, ADMIN_ONLY));
         return endpoints.stream().flatMap(endpoint -> Stream.of(Caller.values())
                 .map(caller -> Arguments.of(endpoint, caller)));
     }

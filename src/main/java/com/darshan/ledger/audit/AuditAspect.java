@@ -4,11 +4,9 @@ import com.darshan.ledger.common.error.ErrorCodes;
 import com.darshan.ledger.common.error.LedgerException;
 import com.darshan.ledger.common.web.CorrelationIdFilter;
 import com.darshan.ledger.security.CurrentUser;
-import com.darshan.ledger.security.Role;
 import jakarta.servlet.http.HttpServletRequest;
 import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -24,9 +22,6 @@ import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.http.HttpEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -47,11 +42,13 @@ public class AuditAspect {
     private static final String RESULT_VARIABLE = "result";
 
     private final AuditLogWriter writer;
+    private final CurrentUser currentUser;
     private final SpelExpressionParser parser = new SpelExpressionParser();
     private final DefaultParameterNameDiscoverer parameterNames = new DefaultParameterNameDiscoverer();
 
-    public AuditAspect(AuditLogWriter writer) {
+    public AuditAspect(AuditLogWriter writer, CurrentUser currentUser) {
         this.writer = writer;
+        this.currentUser = currentUser;
     }
 
     @Around("@annotation(audited)")
@@ -79,14 +76,13 @@ public class AuditAspect {
 
     private AuditEvent eventFor(ProceedingJoinPoint joinPoint, Audited audited, Object result, Throwable failure) {
         EvaluationContext context = evaluationContext(joinPoint, unwrap(result));
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         Map<String, Object> details = new LinkedHashMap<>(evaluateDetails(audited, context));
         if (failure instanceof LedgerException ex) {
             details.putAll(ex.extensions());
         }
         return new AuditEvent(
-                actorOf(authentication),
-                rolesOf(authentication),
+                currentUser.name(),
+                currentUser.roles(),
                 audited.action(),
                 audited.targetType(),
                 evaluateTargetId(audited, context),
@@ -129,22 +125,6 @@ public class AuditAspect {
     // Controllers return ResponseEntity for created resources; the audit expressions want the body.
     private static Object unwrap(Object result) {
         return result instanceof HttpEntity<?> entity ? entity.getBody() : result;
-    }
-
-    private static String actorOf(Authentication authentication) {
-        return authentication == null || !authentication.isAuthenticated() ? CurrentUser.SYSTEM : authentication.getName();
-    }
-
-    private static List<String> rolesOf(Authentication authentication) {
-        if (authentication == null) {
-            return List.of();
-        }
-        return authentication.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .filter(authority -> authority.startsWith(Role.AUTHORITY_PREFIX))
-                .map(authority -> authority.substring(Role.AUTHORITY_PREFIX.length()))
-                .sorted()
-                .toList();
     }
 
     private static String clientIp() {
