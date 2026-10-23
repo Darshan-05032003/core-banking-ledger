@@ -3,8 +3,11 @@ package com.darshan.ledger.ledger;
 import com.darshan.ledger.account.Account;
 import com.darshan.ledger.common.money.Money;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,6 +55,15 @@ public class HoldService {
         hold.release(now);
         lockedBalance.releaseHold(hold.getAmount());
         log.info("Hold {} released for transfer {}", hold.getId(), hold.getTransferId());
+    }
+
+    public Optional<Hold> findActive(Long transferId) {
+        return holdRepository.findByTransferIdAndStatus(transferId, HoldStatus.ACTIVE);
+    }
+
+    // Oldest expiry first, so a backlog is worked off in the order it became due.
+    public List<Long> transferIdsOfHoldsExpiredAt(Instant now, int limit) {
+        return holdRepository.findTransferIdsOfHoldsExpiredAt(now, PageRequest.of(0, limit));
     }
 
     private static void requireSameAccount(Long accountId, AccountBalance balance) {

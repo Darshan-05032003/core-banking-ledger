@@ -175,6 +175,26 @@ class InterestAccrualIntegrationTests {
                 BigDecimal.class, accountId)).isEqualTo(new BigDecimal("250071.92"));
     }
 
+    // The documented consequence of "no interest at closure": the rows stay unposted, the run
+    // reports the failure instead of hiding it, and nothing else in the run is affected.
+    @Test
+    void anAccountClosedBeforeMonthEndKeepsItsAccrualsUnpostedAndIsReportedAsAPostingFailure() {
+        long accountId = testAccounts.openFundedAccount("250000.00");
+        clock.advance(Duration.ofDays(10));
+        service.accrue(MONTH_END.minusDays(2));
+        tellerService.withdraw(accountId, new CashRequest(new BigDecimal("250000.00"), "INR", "Closing"));
+        accountService.close(accountId);
+
+        InterestAccrualResult monthEnd = service.accrue(MONTH_END);
+
+        assertThat(monthEnd.postingFailures()).isGreaterThanOrEqualTo(1);
+        assertThat(interestJournalsOf(accountId)).isEmpty();
+        assertThat(jdbc.queryForList("select posted_journal_id from interest_accrual where account_id = ?",
+                Long.class, accountId)).singleElement().isNull();
+        assertThat(jdbc.queryForObject("select ledger_balance from account_balance where account_id = ?",
+                BigDecimal.class, accountId)).isEqualByComparingTo("0.00");
+    }
+
     @Test
     void interestBelowOnePaisaIsCarriedForwardInsteadOfPosted() {
         long accountId = testAccounts.openFundedAccount("1.00");

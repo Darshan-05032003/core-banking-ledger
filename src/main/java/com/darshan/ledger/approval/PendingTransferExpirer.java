@@ -3,9 +3,7 @@ package com.darshan.ledger.approval;
 import com.darshan.ledger.account.Account;
 import com.darshan.ledger.ledger.AccountBalance;
 import com.darshan.ledger.ledger.Hold;
-import com.darshan.ledger.ledger.HoldRepository;
 import com.darshan.ledger.ledger.HoldService;
-import com.darshan.ledger.ledger.HoldStatus;
 import com.darshan.ledger.ledger.LockTimeout;
 import com.darshan.ledger.ledger.PostingService;
 import com.darshan.ledger.security.CurrentUser;
@@ -30,15 +28,13 @@ public class PendingTransferExpirer {
     private static final Logger log = LoggerFactory.getLogger(PendingTransferExpirer.class);
 
     private final TransferRepository transferRepository;
-    private final HoldRepository holdRepository;
     private final HoldService holdService;
     private final PostingService postingService;
     private final LockTimeout lockTimeout;
 
-    public PendingTransferExpirer(TransferRepository transferRepository, HoldRepository holdRepository,
-            HoldService holdService, PostingService postingService, LockTimeout lockTimeout) {
+    public PendingTransferExpirer(TransferRepository transferRepository, HoldService holdService,
+            PostingService postingService, LockTimeout lockTimeout) {
         this.transferRepository = transferRepository;
-        this.holdRepository = holdRepository;
         this.holdService = holdService;
         this.postingService = postingService;
         this.lockTimeout = lockTimeout;
@@ -51,7 +47,7 @@ public class PendingTransferExpirer {
         if (transfer == null || !transfer.isPendingApproval()) {
             return Optional.empty();
         }
-        Hold hold = holdRepository.findByTransferIdAndStatus(transferId, HoldStatus.ACTIVE)
+        Hold hold = holdService.findActive(transferId)
                 .orElseThrow(() -> new IllegalStateException(
                         "Pending transfer " + transfer.getReference() + " has no active hold"));
         if (!hold.isExpiredAt(now)) {

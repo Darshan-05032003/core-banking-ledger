@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Base64;
 import org.junit.jupiter.api.BeforeAll;
@@ -75,6 +76,13 @@ class JwtKeySourceTests {
     void aMissingFileIsReportedNotSilentlyReplaced() {
         assertThatThrownBy(() -> JwtKeySource.resolve(jwt("/nowhere/private.pem", "/nowhere/public.pem", true)))
                 .hasMessageContaining("private key");
+    }
+
+    @Test
+    void aMissingPublicKeyFileIsReportedByName() {
+        assertThatThrownBy(() -> JwtKeySource.loadPublicKey("file:/nowhere/public.pem"))
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessageContaining("public key");
     }
 
     private static SecurityProperties.Jwt jwt(String privateKey, String publicKey, boolean allowGenerated) {

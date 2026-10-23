@@ -14,6 +14,7 @@ import com.darshan.ledger.common.idempotency.IdempotencyService;
 import com.darshan.ledger.common.idempotency.StoredResponse;
 import com.darshan.ledger.ledger.LedgerErrorCode;
 import com.darshan.ledger.security.CurrentUser;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Optional;
@@ -38,6 +39,7 @@ class TransferServiceTests {
     @Mock
     private CurrentUser currentUser;
 
+    private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private TransferService service;
     private final TransferRequest raw = new TransferRequest("000100000023", "000100000057", new BigDecimal("250"),
             "INR", "  Rent ");
@@ -47,7 +49,7 @@ class TransferServiceTests {
     @BeforeEach
     void setUp() {
         service = new TransferService(idempotencyService, processor, failureRecorder, transferRepository,
-                new TransferMapperImpl(), currentUser);
+                new TransferMapperImpl(), currentUser, new TransferMetrics(registry));
     }
 
     @Test
@@ -62,6 +64,7 @@ class TransferServiceTests {
         assertThat(outcome).isSameAs(created);
         verifyNoInteractions(failureRecorder);
         verify(idempotencyService, never()).release(anyLong());
+        assertThat(registry.get(TransferMetrics.COMPLETED).counter().count()).isEqualTo(1.0);
     }
 
     @Test
@@ -99,6 +102,8 @@ class TransferServiceTests {
 
         assertThatThrownBy(() -> service.transfer("order-1", raw)).isSameAs(recorded);
         verify(idempotencyService, never()).release(anyLong());
+        assertThat(registry.get(TransferMetrics.FAILED).tag(TransferMetrics.ERROR_CODE_TAG, "INSUFFICIENT_FUNDS")
+                .counter().count()).isEqualTo(1.0);
     }
 
     @Test

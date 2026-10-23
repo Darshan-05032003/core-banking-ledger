@@ -3,8 +3,8 @@ package com.darshan.ledger.audit;
 import com.darshan.ledger.common.error.ErrorCodes;
 import com.darshan.ledger.common.error.LedgerException;
 import com.darshan.ledger.common.web.CorrelationIdFilter;
+import com.darshan.ledger.common.web.CurrentRequest;
 import com.darshan.ledger.security.CurrentUser;
-import jakarta.servlet.http.HttpServletRequest;
 import java.lang.reflect.Method;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -24,8 +24,6 @@ import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.http.HttpEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 // Runs outside the method-security interceptors on purpose: a request that is refused by
 // @PreAuthorize is an attempt somebody made, and the trail must show it. Those interceptors are
@@ -88,7 +86,7 @@ public class AuditAspect {
                 evaluateTargetId(audited, context),
                 failure == null ? AuditOutcome.SUCCESS : AuditOutcome.FAILURE,
                 failure == null ? null : ErrorCodes.of(failure).code(),
-                clientIp(),
+                CurrentRequest.clientIp().orElse(null),
                 MDC.get(CorrelationIdFilter.MDC_KEY),
                 details);
     }
@@ -125,13 +123,5 @@ public class AuditAspect {
     // Controllers return ResponseEntity for created resources; the audit expressions want the body.
     private static Object unwrap(Object result) {
         return result instanceof HttpEntity<?> entity ? entity.getBody() : result;
-    }
-
-    private static String clientIp() {
-        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
-            HttpServletRequest request = attributes.getRequest();
-            return request.getRemoteAddr();
-        }
-        return null;
     }
 }

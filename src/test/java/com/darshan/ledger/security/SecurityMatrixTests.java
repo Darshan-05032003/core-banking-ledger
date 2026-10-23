@@ -60,6 +60,8 @@ class SecurityMatrixTests {
         List<Endpoint> endpoints = List.of(
                 new Endpoint(HttpMethod.POST, "/api/v1/auth/token", "TOKEN", EVERYONE),
                 new Endpoint(HttpMethod.GET, "/actuator/health", null, EVERYONE),
+                new Endpoint(HttpMethod.GET, "/actuator/health/readiness", null, EVERYONE),
+                new Endpoint(HttpMethod.GET, "/actuator/info", null, EVERYONE),
                 new Endpoint(HttpMethod.GET, "/actuator/prometheus", null, ADMIN_ONLY),
                 new Endpoint(HttpMethod.POST, "/api/v1/customers", "CUSTOMER", TELLER_OR_ADMIN),
                 new Endpoint(HttpMethod.GET, "/api/v1/customers/999999", null, STAFF),

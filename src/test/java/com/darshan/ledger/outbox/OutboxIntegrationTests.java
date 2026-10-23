@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.darshan.ledger.IntegrationTest;
+import com.darshan.ledger.MutableClock;
 import com.darshan.ledger.TestAccounts;
 import com.darshan.ledger.ledger.CashRequest;
 import com.darshan.ledger.ledger.EntryDirection;
@@ -23,6 +24,7 @@ import com.darshan.ledger.notification.Notification;
 import com.darshan.ledger.notification.NotificationChannel;
 import com.darshan.ledger.notification.NotificationRepository;
 import com.jayway.jsonpath.JsonPath;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -42,6 +44,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.TimeoutException;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -101,6 +104,12 @@ class OutboxIntegrationTests {
 
     @Autowired
     private Clock clock;
+
+    @Autowired
+    private MutableClock mutableClock;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -221,6 +230,31 @@ class OutboxIntegrationTests {
         assertThat(notificationRepository.findByAccountIdOrderByIdAsc(beneficiaryId)).hasSize(1);
         assertThat(notificationRepository.findByAccountIdOrderByIdAsc(senderId))
                 .as("the funding deposit and the transfer, nothing for the refusal").hasSize(2);
+    }
+
+    @AfterEach
+    void resetClock() {
+        mutableClock.reset();
+    }
+
+    @Test
+    void theLagGaugeReportsTheAgeOfTheOldestUnpublishedEventAndZeroOnceRelayed() {
+        long accountId = testAccounts.openActiveAccount();
+        drainOutbox();
+        assertThat(gauge(OutboxMetrics.UNPUBLISHED)).isZero();
+        assertThat(gauge(OutboxMetrics.LAG)).isZero();
+
+        testAccounts.fund(accountId, "10.00");
+        mutableClock.advance(Duration.ofSeconds(90));
+        testAccounts.fund(accountId, "5.00");
+
+        assertThat(gauge(OutboxMetrics.UNPUBLISHED)).isEqualTo(2.0);
+        assertThat(gauge(OutboxMetrics.LAG)).as("age of the oldest row, not the newest").isEqualTo(90.0);
+
+        relay.run();
+
+        assertThat(gauge(OutboxMetrics.UNPUBLISHED)).isZero();
+        assertThat(gauge(OutboxMetrics.LAG)).isZero();
     }
 
     @Test
@@ -378,6 +412,10 @@ class OutboxIntegrationTests {
     private List<Map<String, Object>> unpublishedRowsForAccount(long accountId) {
         return jdbc.queryForList("select attempts, last_error from outbox_event where partition_key = ?"
                 + " and published_at is null order by seq_no", String.valueOf(accountId));
+    }
+
+    private double gauge(String name) {
+        return meterRegistry.get(name).gauge().value();
     }
 
     private int outboxRowsForAccount(long accountId) {

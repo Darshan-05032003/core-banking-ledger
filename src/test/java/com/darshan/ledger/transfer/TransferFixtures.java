@@ -6,6 +6,7 @@ import com.darshan.ledger.account.AccountType;
 import com.darshan.ledger.common.money.Money;
 import com.darshan.ledger.customer.Customer;
 import com.darshan.ledger.ledger.AccountBalance;
+import com.darshan.ledger.ledger.LedgerFixtures;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -41,12 +42,7 @@ final class TransferFixtures {
     }
 
     static AccountBalance balance(Account account, String available) {
-        AccountBalance balance = new AccountBalance(account);
-        Money amount = Money.of(available, account.getCurrency());
-        if (amount.isPositive()) {
-            balance.credit(amount);
-        }
-        return balance;
+        return LedgerFixtures.balance(account, available);
     }
 
     static TransferRequest request(Account from, Account to, String amount, String currency) {

@@ -6,9 +6,7 @@ import com.darshan.ledger.common.error.ResourceNotFoundException;
 import com.darshan.ledger.common.web.PageResponse;
 import com.darshan.ledger.ledger.AccountBalance;
 import com.darshan.ledger.ledger.Hold;
-import com.darshan.ledger.ledger.HoldRepository;
 import com.darshan.ledger.ledger.HoldService;
-import com.darshan.ledger.ledger.HoldStatus;
 import com.darshan.ledger.ledger.JournalEntry;
 import com.darshan.ledger.ledger.JournalType;
 import com.darshan.ledger.ledger.LockTimeout;
@@ -18,6 +16,7 @@ import com.darshan.ledger.ledger.PostingService;
 import com.darshan.ledger.security.CurrentUser;
 import com.darshan.ledger.transfer.Transfer;
 import com.darshan.ledger.transfer.TransferMapper;
+import com.darshan.ledger.transfer.TransferMetrics;
 import com.darshan.ledger.transfer.TransferRepository;
 import com.darshan.ledger.transfer.TransferResponse;
 import com.darshan.ledger.transfer.TransferStatus;
@@ -42,23 +41,23 @@ public class ApprovalService {
     private static final Logger log = LoggerFactory.getLogger(ApprovalService.class);
 
     private final TransferRepository transferRepository;
-    private final HoldRepository holdRepository;
     private final HoldService holdService;
     private final PostingService postingService;
     private final LockTimeout lockTimeout;
     private final TransferMapper transferMapper;
+    private final TransferMetrics transferMetrics;
     private final CurrentUser currentUser;
     private final Clock clock;
 
-    public ApprovalService(TransferRepository transferRepository, HoldRepository holdRepository,
-            HoldService holdService, PostingService postingService, LockTimeout lockTimeout,
-            TransferMapper transferMapper, CurrentUser currentUser, Clock clock) {
+    public ApprovalService(TransferRepository transferRepository, HoldService holdService,
+            PostingService postingService, LockTimeout lockTimeout, TransferMapper transferMapper,
+            TransferMetrics transferMetrics, CurrentUser currentUser, Clock clock) {
         this.transferRepository = transferRepository;
-        this.holdRepository = holdRepository;
         this.holdService = holdService;
         this.postingService = postingService;
         this.lockTimeout = lockTimeout;
         this.transferMapper = transferMapper;
+        this.transferMetrics = transferMetrics;
         this.currentUser = currentUser;
         this.clock = clock;
     }
@@ -82,6 +81,7 @@ public class ApprovalService {
                 List.of(PostingLeg.debit(sender, transfer.getAmount()),
                         PostingLeg.credit(beneficiary, transfer.getAmount()))));
         transfer.approve(journal, checker, now);
+        transferMetrics.completed();
         log.info("Transfer {} approved by {} and posted as {}", transfer.getReference(), checker,
                 journal.getReference());
         return transferMapper.toResponse(transfer);
@@ -130,7 +130,7 @@ public class ApprovalService {
     }
 
     private Hold activeHoldOf(Transfer transfer) {
-        return holdRepository.findByTransferIdAndStatus(transfer.getId(), HoldStatus.ACTIVE)
+        return holdService.findActive(transfer.getId())
                 .orElseThrow(() -> new IllegalStateException(
                         "Pending transfer " + transfer.getReference() + " has no active hold"));
     }

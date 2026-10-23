@@ -11,6 +11,7 @@ import com.darshan.ledger.ledger.EntryDirection;
 import com.darshan.ledger.ledger.JournalType;
 import com.darshan.ledger.outbox.LedgerTopics;
 import com.darshan.ledger.outbox.LedgerTransactionPostedV1;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -60,6 +61,9 @@ class NotificationConsumerIntegrationTests {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private MeterRegistry meterRegistry;
+
     @Test
     void theSameEventDeliveredTwiceProducesOneNotificationAndOneProcessedRow() throws Exception {
         long accountId = testAccounts.openActiveAccount();
@@ -83,6 +87,8 @@ class NotificationConsumerIntegrationTests {
 
     @Test
     void recordsTheConsumerCannotProcessEndUpInTheDeadLetterTopicWithTheirHeaders() throws Exception {
+        double deadLettersBefore = deadLettered();
+        double emailsBefore = sent(NotificationChannel.EMAIL);
         long accountId = testAccounts.openActiveAccount();
         String key = String.valueOf(accountId);
         String notJson = "{\"schemaVersion\":1,\"eventId\":";
@@ -128,6 +134,8 @@ class NotificationConsumerIntegrationTests {
                 .extracting(Notification::getEventId).containsExactly(healthy.eventId()));
         assertThat(jdbc.queryForObject("select count(*) from notification where event_id is null", Integer.class))
                 .isZero();
+        assertThat(deadLettered() - deadLettersBefore).isEqualTo(3.0);
+        assertThat(sent(NotificationChannel.EMAIL) - emailsBefore).isGreaterThanOrEqualTo(1.0);
     }
 
     private void send(LedgerTransactionPostedV1 event) throws Exception {
@@ -159,6 +167,15 @@ class NotificationConsumerIntegrationTests {
                 null, overrides);
         consumer.subscribe(List.of(LedgerTopics.TRANSACTIONS_DLT));
         return consumer;
+    }
+
+    private double deadLettered() {
+        return meterRegistry.get(NotificationMetrics.DEAD_LETTERED).counter().count();
+    }
+
+    private double sent(NotificationChannel channel) {
+        return meterRegistry.get(NotificationMetrics.SENT).tag(NotificationMetrics.CHANNEL_TAG, channel.name())
+                .counter().count();
     }
 
     private int processedRows(UUID eventId) {

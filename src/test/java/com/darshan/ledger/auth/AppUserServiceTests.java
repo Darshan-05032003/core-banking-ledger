@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 class AppUserServiceTests {
@@ -53,6 +54,29 @@ class AppUserServiceTests {
         assertThat(saved.getValue().getCreatedAt()).isEqualTo(NOW);
         assertThat(response.username()).isEqualTo("asha.rao");
         assertThat(response.customerId()).isNull();
+    }
+
+    @Test
+    void getReturnsTheMappedLoginAndAnUnknownIdIs404() {
+        AppUser user = new AppUser("asha", "{bcrypt}hash", Set.of(Role.CUSTOMER), 42L, "admin", NOW);
+        ReflectionTestUtils.setField(user, "id", 5L);
+        given(repository.findById(5L)).willReturn(Optional.of(user));
+        given(repository.findById(6L)).willReturn(Optional.empty());
+
+        AppUserResponse response = service.get(5L);
+
+        assertThat(response.id()).isEqualTo(5L);
+        assertThat(response.username()).isEqualTo("asha");
+        assertThat(response.customerId()).isEqualTo(42L);
+        assertThatThrownBy(() -> service.get(6L)).isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void existsLooksUpTheNormalisedUsername() {
+        given(repository.existsByUsername("asha.rao")).willReturn(true);
+
+        assertThat(service.exists(" Asha.Rao ")).isTrue();
+        assertThat(service.exists("ravi")).isFalse();
     }
 
     @Test
