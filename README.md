@@ -160,12 +160,11 @@ The `Dockerfile` has two stages. The build stage runs the Maven wrapper on `ecli
 ### Locally with Maven
 
 ```bash
-cp .env.example .env          # adjust if needed
 docker compose up -d postgres kafka
-./mvnw spring-boot:run        # http://localhost:8082, dev profile
+APP_ADMIN_PASSWORD=change-me-before-starting ./mvnw spring-boot:run   # http://localhost:8082, dev profile
 ```
 
-Every setting is an environment variable with a local default; `.env.example` lists them all with their meaning.
+The Maven run takes its settings from environment variables, not from `.env`, which only docker compose reads. Every variable has the local default listed in `.env.example` (the database on `localhost:5433`, Kafka on `localhost:9094`), so nothing else needs to be set; to change a setting, export its variable before starting. `APP_ADMIN_PASSWORD` is the one value without a default: when it is not set, the `dev` profile logs a warning and seeds no admin login, which leaves a fresh database with no way to sign in.
 
 ## API
 
