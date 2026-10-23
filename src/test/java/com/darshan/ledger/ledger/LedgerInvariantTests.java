@@ -18,8 +18,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 // The accounting identity must survive any sequence of operations, including the ones that are
-// refused: every journal balances, every balance row equals its account's history, and the cash
-// in the vault equals what the bank owes its customers.
+// refused: every journal balances, every balance row equals its account's history, and what the
+// bank owes its customers equals the cash in the vault plus the interest it has paid them.
 @IntegrationTest
 class LedgerInvariantTests {
 
@@ -116,12 +116,17 @@ class LedgerInvariantTests {
                 "select coalesce(sum(case when e.direction = 'DEBIT' then e.amount else -e.amount end), 0)"
                         + " from ledger_entry e join gl_account g on g.id = e.gl_account_id where g.code = 'CASH_VAULT'",
                 BigDecimal.class);
+        BigDecimal interestPaid = jdbc.queryForObject(
+                "select coalesce(sum(case when e.direction = 'DEBIT' then e.amount else -e.amount end), 0)"
+                        + " from ledger_entry e join gl_account g on g.id = e.gl_account_id"
+                        + " where g.code = 'INTEREST_EXPENSE'",
+                BigDecimal.class);
         BigDecimal owedToCustomers = jdbc.queryForObject(
                 "select coalesce(sum(ledger_balance), 0) from account_balance", BigDecimal.class);
         BigDecimal customerHistory = jdbc.queryForObject(
                 "select coalesce(sum(case when direction = 'CREDIT' then amount else -amount end), 0)"
                         + " from ledger_entry where account_id is not null", BigDecimal.class);
-        assertThat(cashInVault).isEqualByComparingTo(owedToCustomers);
+        assertThat(cashInVault.add(interestPaid)).isEqualByComparingTo(owedToCustomers);
         assertThat(customerHistory).isEqualByComparingTo(owedToCustomers);
     }
 

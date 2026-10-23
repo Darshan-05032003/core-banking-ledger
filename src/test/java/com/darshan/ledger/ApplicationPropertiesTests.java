@@ -58,7 +58,9 @@ class ApplicationPropertiesTests {
             assertThat(security.jwt().hasConfiguredKeys()).isFalse();
             assertThat(security.rateLimit().transfersPerMinute()).isEqualTo(20);
 
-            assertThat(context.getBean(LedgerProperties.class).lockTimeout()).isEqualTo(Duration.ofSeconds(3));
+            LedgerProperties ledger = context.getBean(LedgerProperties.class);
+            assertThat(ledger.lockTimeout()).isEqualTo(Duration.ofSeconds(3));
+            assertThat(ledger.eodCheckCron()).isEqualTo("0 0 1 * * *");
             assertThat(context.getBean(StatementProperties.class).maxPeriod()).isEqualTo(Period.ofYears(1));
             assertThat(context.getBean(IdempotencyProperties.class).inProgressTimeout())
                     .isEqualTo(Duration.ofMinutes(2));
@@ -69,6 +71,8 @@ class ApplicationPropertiesTests {
             assertThat(outbox.publishTimeout()).isEqualTo(Duration.ofSeconds(15));
             assertThat(outbox.topicPartitions()).isEqualTo(3);
             assertThat(outbox.topicReplicationFactor()).isEqualTo((short) 1);
+            assertThat(outbox.retention()).isEqualTo(Duration.ofDays(7));
+            assertThat(outbox.purgeCron()).isEqualTo("0 0 2 * * *");
 
             NotificationProperties notification = context.getBean(NotificationProperties.class);
             assertThat(notification.groupId()).isEqualTo("ledger-notifications");
@@ -104,6 +108,7 @@ class ApplicationPropertiesTests {
             "app.security.jwt.private-key=-----BEGIN PRIVATE KEY-----",
             "app.security.rate-limit.transfers-per-minute=0",
             "app.ledger.lock-timeout=0s",
+            "app.ledger.eod-check-cron=nightly",
             "app.idempotency.in-progress-timeout=-1m",
             "app.statement.max-period=0d",
             "app.statement.max-period=-6m",
@@ -112,6 +117,8 @@ class ApplicationPropertiesTests {
             "app.outbox.batch-size=5000",
             "app.outbox.publish-timeout=-1s",
             "app.outbox.topic-partitions=0",
+            "app.outbox.retention=0s",
+            "app.outbox.purge-cron=weekly",
             "app.notification.group-id=",
             "app.notification.retry-attempts=0",
             "app.notification.retry-backoff=-1s"

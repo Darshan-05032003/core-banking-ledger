@@ -73,6 +73,24 @@ public class OutboxEventRepository {
                 .update();
     }
 
+    // Deletes in slices so a night's purge never holds a long transaction or a large lock set;
+    // the caller repeats until a slice comes back short. Only published rows are ever touched.
+    public int deletePublishedBefore(Instant cutoff, int limit) {
+        return jdbc.sql("""
+                DELETE FROM outbox_event
+                WHERE id IN (
+                    SELECT id
+                    FROM outbox_event
+                    WHERE published_at < :cutoff
+                    ORDER BY published_at
+                    LIMIT :limit
+                )
+                """)
+                .param("cutoff", cutoff.atOffset(ZoneOffset.UTC))
+                .param("limit", limit)
+                .update();
+    }
+
     public long countUnpublished() {
         return jdbc.sql("SELECT count(*) FROM outbox_event WHERE published_at IS NULL")
                 .query(Long.class)

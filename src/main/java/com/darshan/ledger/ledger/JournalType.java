@@ -4,5 +4,6 @@ public enum JournalType {
     DEPOSIT,
     WITHDRAWAL,
     TRANSFER,
+    INTEREST,
     REVERSAL
 }
