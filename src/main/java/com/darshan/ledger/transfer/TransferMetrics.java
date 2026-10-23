@@ -65,7 +65,8 @@ public class TransferMetrics {
                     completed.increment();
                     sample.stop(latencyByOutcome.get(OUTCOME_COMPLETED));
                 }
-                case TransferOutcome.PendingApproval pending -> sample.stop(latencyByOutcome.get(OUTCOME_PENDING_APPROVAL));
+                case TransferOutcome.PendingApproval pending ->
+                        sample.stop(latencyByOutcome.get(OUTCOME_PENDING_APPROVAL));
                 case TransferOutcome.Replayed replayed -> sample.stop(latencyByOutcome.get(OUTCOME_REPLAYED));
             }
             return outcome;
