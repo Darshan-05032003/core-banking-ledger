@@ -3,7 +3,7 @@ package com.darshan.ledger.approval;
 import com.darshan.ledger.audit.AuditEvent;
 import com.darshan.ledger.audit.AuditLogWriter;
 import com.darshan.ledger.audit.AuditOutcome;
-import com.darshan.ledger.ledger.HoldRepository;
+import com.darshan.ledger.ledger.HoldService;
 import com.darshan.ledger.security.CurrentUser;
 import java.time.Clock;
 import java.time.Instant;
@@ -12,7 +12,6 @@ import java.util.Map;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -30,14 +29,14 @@ public class PendingTransferExpiryJob {
     private static final Logger log = LoggerFactory.getLogger(PendingTransferExpiryJob.class);
     private static final int BATCH_SIZE = 100;
 
-    private final HoldRepository holdRepository;
+    private final HoldService holdService;
     private final PendingTransferExpirer expirer;
     private final AuditLogWriter auditLogWriter;
     private final Clock clock;
 
-    public PendingTransferExpiryJob(HoldRepository holdRepository, PendingTransferExpirer expirer,
+    public PendingTransferExpiryJob(HoldService holdService, PendingTransferExpirer expirer,
             AuditLogWriter auditLogWriter, Clock clock) {
-        this.holdRepository = holdRepository;
+        this.holdService = holdService;
         this.expirer = expirer;
         this.auditLogWriter = auditLogWriter;
         this.clock = clock;
@@ -55,7 +54,7 @@ public class PendingTransferExpiryJob {
         int expired = 0;
         List<Long> batch;
         do {
-            batch = holdRepository.findTransferIdsOfHoldsExpiredAt(now, PageRequest.of(0, BATCH_SIZE));
+            batch = holdService.transferIdsOfHoldsExpiredAt(now, BATCH_SIZE);
             int before = expired;
             for (Long transferId : batch) {
                 expired += expireOne(transferId, now) ? 1 : 0;

@@ -7,7 +7,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
-public interface HoldRepository extends JpaRepository<Hold, Long> {
+// Package-private: the approval workflow reads holds through HoldService, which is also the only
+// code that places, captures and releases them.
+interface HoldRepository extends JpaRepository<Hold, Long> {
 
     Optional<Hold> findByTransferIdAndStatus(Long transferId, HoldStatus status);
 

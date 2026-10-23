@@ -43,7 +43,9 @@ public class AccountBalance {
     @Version
     private Long version;
 
-    public AccountBalance(Account account) {
+    // Package-private on purpose, like every method below that changes a figure: only the ledger
+    // package may create or move a balance, and the compiler enforces it before any test does.
+    AccountBalance(Account account) {
         this.accountId = Objects.requireNonNull(account.getId(), "account must be persisted first");
         this.currency = account.getCurrency();
         this.ledgerBalance = Money.zero(currency).amount();
@@ -62,7 +64,7 @@ public class AccountBalance {
         return new AccountBalanceSnapshot(ledgerBalance(), availableBalance());
     }
 
-    public void credit(Money amount) {
+    void credit(Money amount) {
         requireCurrency(amount);
         ledgerBalance = ledgerBalance().plus(amount).amount();
         availableBalance = availableBalance().plus(amount).amount();
@@ -70,7 +72,7 @@ public class AccountBalance {
 
     // Debits are checked against the available balance, not the ledger balance, so money reserved
     // by a hold can never be spent twice.
-    public void debit(Money amount) {
+    void debit(Money amount) {
         requireCurrency(amount);
         if (availableBalance().isLessThan(amount)) {
             throw new BusinessRuleException(LedgerErrorCode.INSUFFICIENT_FUNDS,
@@ -82,7 +84,7 @@ public class AccountBalance {
 
     // A hold reserves money without posting anything: the ledger balance stays, the available
     // balance drops, and the gap is exactly the sum of the account's active holds.
-    public void hold(Money amount) {
+    void hold(Money amount) {
         requireCurrency(amount);
         if (availableBalance().isLessThan(amount)) {
             throw new BusinessRuleException(LedgerErrorCode.INSUFFICIENT_FUNDS,
@@ -91,7 +93,7 @@ public class AccountBalance {
         availableBalance = availableBalance().minus(amount).amount();
     }
 
-    public void releaseHold(Money amount) {
+    void releaseHold(Money amount) {
         requireCurrency(amount);
         Money released = availableBalance().plus(amount);
         if (released.isGreaterThan(ledgerBalance())) {

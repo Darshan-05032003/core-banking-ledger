@@ -3,14 +3,16 @@ package com.darshan.ledger.ledger;
 import com.darshan.ledger.account.Account;
 import com.darshan.ledger.account.AccountNumber;
 import com.darshan.ledger.account.AccountType;
+import com.darshan.ledger.common.money.Money;
 import com.darshan.ledger.customer.Customer;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Currency;
 import org.springframework.test.util.ReflectionTestUtils;
 
-// Entities with database-assigned ids, for unit tests that never touch a database.
-final class LedgerFixtures {
+// Entities with database-assigned ids, for unit tests that never touch a database. Public because
+// the transfer rule tests need a funded balance and only this package may credit one.
+public final class LedgerFixtures {
 
     static final Currency INR = Currency.getInstance("INR");
     static final Currency USD = Currency.getInstance("USD");
@@ -39,5 +41,14 @@ final class LedgerFixtures {
 
     static GlAccount cashVault() {
         return glAccount(1L, GlAccountCode.CASH_VAULT, GlAccountType.ASSET);
+    }
+
+    public static AccountBalance balance(Account account, String available) {
+        AccountBalance balance = new AccountBalance(account);
+        Money amount = Money.of(available, account.getCurrency());
+        if (amount.isPositive()) {
+            balance.credit(amount);
+        }
+        return balance;
     }
 }
