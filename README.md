@@ -124,6 +124,12 @@ curl -s -X POST http://localhost:8082/api/v1/auth/token -H 'Content-Type: applic
 docker compose down -v      # stop and drop the database volume
 ```
 
+To walk through the main flow by hand, use the admin token to create a `TELLER`, a `CHECKER` and a `CUSTOMER` login with `POST /api/v1/admin/users` (the customer login takes the `customerId` it belongs to, so onboard the customer first), then onboard, verify KYC, open accounts and deposit as the teller, transfer as the customer and approve as the checker, as listed under [Endpoints](#endpoints). A transfer names both accounts by their full twelve-digit number, which the API never returns; on a local stack read them from the database:
+
+```bash
+docker compose exec postgres psql -U ledger -d ledger -c 'select id, account_number from account'
+```
+
 To run with real signing keys, generate a pair and pass it as PEM text (line breaks may be written as `\n`) or as a file location:
 
 ```bash
